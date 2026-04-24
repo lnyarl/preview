@@ -1,0 +1,12 @@
+{
+  "name": "preview",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Self-hosted Vercel Preview for GitHub PRs",
+  "engines": {
+    "node": ">=20.11",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0"
+}
