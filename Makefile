@@ -1,18 +1,14 @@
-# Preview — development task runner.
-#
-# Phase 0 ships thin wrappers; Phase 1+ adds real schema, queries, and migrations.
-# Targets marked "(Phase 1+)" are declared here so the interface is stable, but
-# they require artefacts or tools that do not yet exist in Phase 0.
+# Preview -- development task runner.
 
-.PHONY: run-hub run-agent build fmt vet lint sqlc migrate-up migrate-down test
+.PHONY: run-hub run-agent build fmt vet lint sqlc migrate-up migrate-down migrate-version test
 
-## Run the Hub entry point (Phase 0: "Hello Hub" at :8080).
+## Run the Hub daemon (default port :3000).
 run-hub:
 	go run ./cmd/hub
 
-## Run the Agent entry point (Phase 0: logs "Hello Agent" and exits).
+## Run the Agent. HUB_URL and HUB_TOKEN must be set in the environment.
 run-agent:
-	go run ./cmd/agent
+	go run ./cmd/agent start --hub-url "$$HUB_URL" --token "$$HUB_TOKEN"
 
 ## Build both binaries into ./bin.
 build:
@@ -27,22 +23,26 @@ fmt:
 vet:
 	go vet ./...
 
-## Run golangci-lint (must be installed locally — see README).
+## Run golangci-lint (must be installed locally -- see README).
 lint:
 	golangci-lint run ./...
 
-## Run unit tests.
+## Run tests.
 test:
 	go test ./...
 
-## Regenerate sqlc code (Phase 1+: requires db/queries/*.sql).
+## Regenerate sqlc code.
 sqlc:
 	sqlc generate
 
-## Apply pending migrations (Phase 1+: requires golang-migrate and DATABASE_URL).
+## Apply pending migrations (embedded; invokes the Hub subcommand).
 migrate-up:
-	migrate -path db/migrations -database "$$DATABASE_URL" up
+	go run ./cmd/hub migrate up
 
-## Roll back the most recent migration (Phase 1+).
+## Roll back the most recent migration.
 migrate-down:
-	migrate -path db/migrations -database "$$DATABASE_URL" down 1
+	go run ./cmd/hub migrate down
+
+## Show current migration version.
+migrate-version:
+	go run ./cmd/hub migrate version

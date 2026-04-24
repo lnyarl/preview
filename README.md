@@ -23,7 +23,7 @@ graph LR
 
 - **Pull 방식 디스패치** — Agent가 capacity 있을 때만 일을 가져가 자연스러운 백프레셔.
 - **Agent -> Hub outbound 연결** — NAT/방화벽 뒤 머신도 Agent로 쓸 수 있다.
-- **토큰 기반 Agent 인증** — GitHub Actions self-hosted runner 방식.
+- **토큰 기반 Agent 인증** — GitHub Actions self-hosted runner 방식. bcrypt 해시만 DB에 저장.
 - **SQLite로 시작, Postgres로 이식 가능** — `internal/store` 인터페이스가 경계면.
 - **웹 프레임워크 없음** — `net/http` 1.22+의 `ServeMux`만 사용.
 - **Hub와 Agent는 분리된 두 바이너리** — 배포 타깃·의존성이 다르다.
@@ -35,46 +35,71 @@ graph LR
   ```
   go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
   ```
-- (선택) `make` — 직접 `go run` 명령으로 대체 가능 (아래 참조)
+- (선택) `sqlc` — sqlc generate 재실행 시:
+  ```
+  go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+  ```
+- (선택) `make` — 직접 `go run` 명령으로 대체 가능
 
 ## 로컬 실행
 
-Phase 0 범위에서 동작하는 명령은 다음과 같다. `make`가 없어도 `go` 명령만으로 실행할 수 있다.
+Phase 1 기준 검증 플로우. 기본 Hub 포트는 `:3000`.
 
 ```
-# Hub 기동 (:8080)
+# 1) 마이그레이션 적용
+go run ./cmd/hub migrate up
+
+# 2) Hub 기동 (:3000)
 go run ./cmd/hub
 # 또는
 make run-hub
 
-# 다른 터미널에서 확인
-curl -s http://localhost:8080/
-# 출력: Hello Hub
+# 3) 다른 터미널에서 health 확인
+curl -s http://localhost:3000/health
+# 출력: {"status":"ok"}
 
-# Agent 기동 (Phase 0: 한 줄 로그 후 종료)
-go run ./cmd/agent
+# 4) Agent 등록 및 토큰 발급
+curl -s -X POST http://localhost:3000/admin/agents \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"agent-1","labels":{"env":"local"}}'
+# 응답 body 의 token 을 보관 (재조회 불가).
+
+# 5) Agent 기동
+go run ./cmd/agent start \
+  --hub-url ws://localhost:3000/agent/ws \
+  --token agt_XXXXXXX \
+  --label env=local
+
+# 6) 상태 확인
+curl -s http://localhost:3000/admin/agents
 # 또는
-make run-agent
+go run ./cmd/hub agents list
 
-# 빌드
+# 빌드 / 검사
 go build ./...
-# 또는
-make build
-
-# 포맷 / 정적 검사
 make fmt
 make vet
-make lint   # golangci-lint 설치 필요
+make lint
+make test
 ```
 
-`make sqlc`, `make migrate-up`, `make migrate-down`은 타겟만 존재하며 실제 실행은 Phase 1부터 가능하다 (쿼리·마이그레이션 파일이 아직 없음).
+## Phase 1 검증
+
+| 항목 | 명령 |
+|---|---|
+| 마이그레이션 up | `go run ./cmd/hub migrate up` |
+| Agent 등록 | `POST /admin/agents` |
+| Agent 조회 | `GET /admin/agents` 또는 `go run ./cmd/hub agents list` |
+| WebSocket 연결 | `go run ./cmd/agent start ...` |
+| Agent kill 후 offline 전환 | SIGTERM/SIGKILL 후 10초 이내 상태가 `offline` |
+| Hub graceful shutdown | SIGINT 후 5초 이내 close frame(1001) 송신 |
 
 ## 왜 SQLite로 시작하는가
 
 - 단일 파일, 별도 서버 프로세스 없음 → 셀프호스팅 도입 장벽이 낮다.
 - `modernc.org/sqlite` 덕분에 **CGO 없이 순수 Go**로 빌드되어 크로스컴파일이 쉽다.
-- 단일 노드 Hub 운영에서 쓰기 경합이 심하지 않다 (웹훅 수신 + 관리자 조작 빈도).
-- 이식성 원칙을 코드 수준에서 강제하므로 (아래 참조) 미래 전환 비용이 크지 않다.
+- 단일 노드 Hub 운영에서 쓰기 경합이 심하지 않다.
+- 이식성 원칙을 코드 수준에서 강제하므로 미래 전환 비용이 크지 않다.
 
 ## 언제 Postgres로 옮길 것인가
 
@@ -95,13 +120,14 @@ make lint   # golangci-lint 설치 필요
 ## 프로젝트 구조
 
 ```
-cmd/hub, cmd/agent        진입점 (얇게)
-internal/hub, internal/agent  도메인 로직 (Phase 1+)
-internal/store            Repository 인터페이스 (이식성 경계면)
-internal/db/sqlite        sqlc 생성 코드 + 구현체 (Phase 1+)
-internal/protocol         Hub<->Agent 메시지 타입 (Phase 2+)
-db/migrations, db/queries, db/schema  SQL 자산 (Phase 1+)
-docs/specs, docs/reports  Phase 기획서와 검증 보고서
+cmd/hub, cmd/agent            진입점 (얇게)
+internal/hub                  Hub HTTP/WS 핸들러, 서비스, 서버
+internal/agent                Agent WS 클라이언트, 재연결 백오프
+internal/store                Repository 인터페이스 (이식성 경계면)
+internal/db/sqlite            sqlc 생성 코드 + AgentStore 구현체 + 마이그레이션 임베드
+internal/protocol             Hub<->Agent 메시지 타입
+db/migrations, db/queries, db/schema   SQL 자산
+docs/specs, docs/reports      Phase 기획서와 검증 보고서
 ```
 
 ## 라이선스
