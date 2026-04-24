@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: preview-postgres
+    environment:
+      POSTGRES_USER: preview
+      POSTGRES_PASSWORD: preview
+      POSTGRES_DB: preview
+    ports:
+      - "${PG_HOST_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U preview -d preview"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # hub: (Phase 1부터 활성)
+  #   build: ./hub
+  #   depends_on:
+  #     postgres: { condition: service_healthy }
+  #   environment:
+  #     DATABASE_URL: postgres://preview:preview@postgres:5432/preview
+  #     HUB_PORT: 3000
+  #   ports: ["3000:3000"]
+
+volumes:
+  pgdata:
