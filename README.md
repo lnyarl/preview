@@ -1,127 +1,108 @@
-# Preview — GitHub PR 프리뷰 환경 자동 배포 서비스
+# Preview
 
-Vercel Preview의 **셀프호스팅/오픈소스 버전**. GitHub PR이 열리면 해당 브랜치를 자동으로 빌드·실행하여 `pr-{n}.preview.domain` 형태의 프리뷰 URL을 생성한다.
-
-> **Phase 0 상태**: 모노레포 스캐폴딩만 완료. 실제 Webhook/WebSocket/Docker 제어 로직은 Phase 1 이후 추가.
+GitHub PR을 열면 자동으로 프리뷰 환경을 띄우고, PR이 닫히면 정리하는 Go 기반 셀프호스팅 서비스.
 
 ## 아키텍처
 
-```
-  GitHub ──webhook──▶ ┌─────────────┐  Reverse Proxy (호스트 헤더 기반)
-                     │     Hub      │ ◀──── pr-{n}.preview.domain
-                     │ (Control     │
-                     │   Plane)     │
-                     └──────┬──────┘
-                            │ WebSocket (outbound from agent)
-                            │ Pull 방식: Agent가 READY → Hub가 JOB 전달
-                            ▼
-                     ┌─────────────┐  git clone / docker build / docker run
-                     │    Agent    │───────────▶ [container:port]
-                     │  (여러 개)  │
-                     └─────────────┘
+두 컴포넌트로 구성된다. Agent가 Hub에 outbound로 연결하므로 Agent 머신에는 inbound 포트가 필요 없다.
+
+```mermaid
+graph LR
+    GH[GitHub] -- webhook --> Hub
+    Admin[관리자] -- HTTP --> Hub
+    Hub <-- WebSocket (pull) --> Agent
+    Agent -- docker build/run --> Container[PR 프리뷰 컨테이너]
+    User[사용자] -- pr-N.preview.example.com --> Hub
+    Hub -- reverse proxy --> Container
 ```
 
-- **Hub** (`/hub`) — GitHub Webhook 수신, DB, WebSocket 서버, Agent 분배, Reverse Proxy, 관리자 대시보드
-- **Agent** (`/agent`) — Hub에 outbound 연결, Pull 방식 작업 수신, Docker 컨테이너 생명주기 관리
-- **Shared** (`/shared`) — 공유 타입·Zod 스키마 (메시지 프로토콜의 Single Source of Truth)
+- **Hub (Control Plane)**: GitHub 웹훅 수신, 관리자 API/UI, Agent WebSocket 서버, Job 큐, 리버스 프록시.
+- **Agent (Data Plane)**: Hub에 outbound WebSocket 연결, pull 방식으로 Job 수신, git clone / docker build / docker run, 포트 동적 할당, PR 종료 시 정리.
 
-## 핵심 설계 결정
+## 설계 결정 요약
 
-| 결정                                     | 이유                                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------------------- |
-| **Pull 방식 디스패치** (Agent→Hub READY) | 자연스러운 백프레셔. Agent가 capacity 있을 때만 일 받음                       |
-| **Agent→Hub outbound WebSocket**         | Agent 머신에 inbound 포트 불필요. NAT/방화벽 뒤에서도 동작                    |
-| **토큰 기반 Agent 인증**                 | GitHub Actions self-hosted runner 방식. Hub에서 등록·발급, Agent 설치 시 사용 |
-| **Label 기반 라우팅**                    | PR label → 매칭되는 Agent에만 할당. 로컬 개발 시나리오 대응                   |
-| **상태 모델**                            | `queued → assigned → building → running → teardown → done \| failed`          |
+- **Pull 방식 디스패치** — Agent가 capacity 있을 때만 일을 가져가 자연스러운 백프레셔.
+- **Agent -> Hub outbound 연결** — NAT/방화벽 뒤 머신도 Agent로 쓸 수 있다.
+- **토큰 기반 Agent 인증** — GitHub Actions self-hosted runner 방식.
+- **SQLite로 시작, Postgres로 이식 가능** — `internal/store` 인터페이스가 경계면.
+- **웹 프레임워크 없음** — `net/http` 1.22+의 `ServeMux`만 사용.
+- **Hub와 Agent는 분리된 두 바이너리** — 배포 타깃·의존성이 다르다.
 
-상세 결정은 `docs/adr/` 참조.
+## 요구사항
 
-## 기술 스택
-
-| 영역          | 선택                                                   |
-| ------------- | ------------------------------------------------------ |
-| 언어          | TypeScript 5.x (strict + `exactOptionalPropertyTypes`) |
-| 런타임        | Node.js 20 LTS (권장), ≥20.11                          |
-| HTTP          | Fastify 4                                              |
-| DB            | PostgreSQL 16 (ORM은 Phase 1에서 결정)                 |
-| WebSocket     | `ws` (Phase 2부터)                                     |
-| Docker 제어   | `dockerode` (Phase 4부터)                              |
-| 검증          | Zod                                                    |
-| 테스트        | Vitest (단위/통합), Playwright (e2e, Phase 6부터)      |
-| 패키지 매니저 | pnpm 9.15.0 (workspace)                                |
-| 로컬 환경     | Docker Compose                                         |
-
-## 저장소 구조
-
-```
-/
-├── hub/        — Control plane (Fastify)
-├── agent/      — Agent CLI
-├── shared/     — 공유 타입·스키마
-├── docs/       — 아키텍처 문서, ADR
-├── docker-compose.yml
-├── package.json  pnpm-workspace.yaml  tsconfig.base.json
-├── eslint.config.js  .prettierrc  .editorconfig
-└── .env.example
-```
-
-## 사전 요구사항
-
-- **Node.js ≥ 20.11** (권장: Node 20 LTS, `.nvmrc` 참조)
-- **pnpm 9.15.0** — `corepack enable` 으로 자동 활성화
-  - Windows에서는 관리자 PowerShell로 `corepack enable` 필요할 수 있음
-  - Defender 성능을 위해 `%LOCALAPPDATA%\pnpm` 을 제외 경로로 추가 권장
-- **Docker Desktop** (WSL2 백엔드 권장, Windows)
-- **Git**
+- Go 1.22 이상
+- (선택) `golangci-lint` — lint 실행에 필요:
+  ```
+  go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  ```
+- (선택) `make` — 직접 `go run` 명령으로 대체 가능 (아래 참조)
 
 ## 로컬 실행
 
-```bash
-# 1) 의존성 설치 (모든 워크스페이스 링크 자동 생성)
-corepack enable
-pnpm install
+Phase 0 범위에서 동작하는 명령은 다음과 같다. `make`가 없어도 `go` 명령만으로 실행할 수 있다.
 
-# 2) Postgres 기동
-docker compose up -d postgres
+```
+# Hub 기동 (:8080)
+go run ./cmd/hub
+# 또는
+make run-hub
 
-# 3) Hub 개발 서버 (포트 3000)
-pnpm dev:hub
-# 확인: curl http://localhost:3000/
-# → {"hello":"hub","shared":"0.0.0"}
+# 다른 터미널에서 확인
+curl -s http://localhost:8080/
+# 출력: Hello Hub
 
-# 4) Agent CLI (다른 터미널)
-pnpm dev:agent
-# → Hello Agent (agent=0.0.0, shared=0.0.0)
+# Agent 기동 (Phase 0: 한 줄 로그 후 종료)
+go run ./cmd/agent
+# 또는
+make run-agent
+
+# 빌드
+go build ./...
+# 또는
+make build
+
+# 포맷 / 정적 검사
+make fmt
+make vet
+make lint   # golangci-lint 설치 필요
 ```
 
-## 스크립트 레퍼런스
+`make sqlc`, `make migrate-up`, `make migrate-down`은 타겟만 존재하며 실제 실행은 Phase 1부터 가능하다 (쿼리·마이그레이션 파일이 아직 없음).
 
-루트에서 실행:
+## 왜 SQLite로 시작하는가
 
-| 명령                           | 설명                               |
-| ------------------------------ | ---------------------------------- |
-| `pnpm build`                   | 전 워크스페이스 TS 컴파일          |
-| `pnpm typecheck`               | 컴파일 없이 타입만 검증            |
-| `pnpm lint`                    | ESLint (flat config)               |
-| `pnpm format` / `format:check` | Prettier write / check             |
-| `pnpm test`                    | Vitest 전체 (현재 테스트 케이스 0) |
-| `pnpm dev:hub` / `dev:agent`   | 해당 패키지 watch 개발             |
+- 단일 파일, 별도 서버 프로세스 없음 → 셀프호스팅 도입 장벽이 낮다.
+- `modernc.org/sqlite` 덕분에 **CGO 없이 순수 Go**로 빌드되어 크로스컴파일이 쉽다.
+- 단일 노드 Hub 운영에서 쓰기 경합이 심하지 않다 (웹훅 수신 + 관리자 조작 빈도).
+- 이식성 원칙을 코드 수준에서 강제하므로 (아래 참조) 미래 전환 비용이 크지 않다.
 
-## Phase 로드맵
+## 언제 Postgres로 옮길 것인가
 
-- [x] **Phase 0** — 모노레포 스캐폴딩 (현재)
-- [ ] **Phase 1** — GitHub Webhook 수신, DB 스키마, PR 레코드 생성
-- [ ] **Phase 2** — Agent 등록·토큰 발급, WebSocket 연결, 하트비트
-- [ ] **Phase 3** — Job 큐, Pull 방식 디스패치, 상태 머신
-- [ ] **Phase 4** — git clone + docker build + run, 포트 보고
-- [ ] **Phase 5** — Reverse Proxy (호스트 헤더 라우팅)
-- [ ] **Phase 6** — 관리자 대시보드 + Playwright e2e
-- [ ] **Phase 7** — PR 닫힘 시 teardown, 장애 복구
+다음 중 하나라도 해당되면 이전을 검토한다.
 
-## ADR
+- Hub를 수평 확장해 여러 인스턴스가 동일 DB를 공유해야 할 때 (SQLite는 단일 라이터).
+- 동시 쓰기 경합이 커져 `database is locked` 오류가 관측될 때.
+- 장기 보관·분석 쿼리가 무거워져 백업/리플리카/읽기 전용 노드가 필요할 때.
+- 운영팀이 이미 표준화된 Postgres 운영 스택을 가지고 있어 단일 파일 운영이 오히려 부담이 될 때.
 
-- [ADR-0001 모노레포 구조](./docs/adr/0001-monorepo-structure.md)
+이식 경로는 다음과 같다.
+1. `DATABASE_URL`을 `postgres://...`로 전환.
+2. `internal/db/postgres/` 아래 sqlc를 새로 생성.
+3. `internal/store` 인터페이스를 만족하는 Postgres 구현체 추가.
+4. 비즈니스 로직(`internal/hub`, `internal/agent`)은 인터페이스에만 의존하므로 **변경 불필요**.
+5. 금지어(`AUTOINCREMENT`, `INSERT OR REPLACE`, `jsonb` 전용 연산자 등)를 쓰지 않았는지 스키마를 재검증.
+
+## 프로젝트 구조
+
+```
+cmd/hub, cmd/agent        진입점 (얇게)
+internal/hub, internal/agent  도메인 로직 (Phase 1+)
+internal/store            Repository 인터페이스 (이식성 경계면)
+internal/db/sqlite        sqlc 생성 코드 + 구현체 (Phase 1+)
+internal/protocol         Hub<->Agent 메시지 타입 (Phase 2+)
+db/migrations, db/queries, db/schema  SQL 자산 (Phase 1+)
+docs/specs, docs/reports  Phase 기획서와 검증 보고서
+```
 
 ## 라이선스
 
