@@ -1,0 +1,68 @@
+// 이 파일의 책임:
+//   - agent_id -> 활성 WS 연결 매핑.
+//   - 동일 agent_id 의 중복 연결을 탐지 (결정 12).
+//   - Hub shutdown 시 모든 연결에 close frame 을 송신.
+package hub
+
+import (
+	"context"
+	"sync"
+
+	"github.com/coder/websocket"
+)
+
+// wsConn 은 단일 WS 세션에 대한 레지스트리 엔트리.
+// cancel 을 호출하면 connCtx 가 취소되고 readLoop + pingTicker 가 종료된다.
+type wsConn struct {
+	agentID string
+	conn    *websocket.Conn
+	cancel  context.CancelFunc
+}
+
+// ConnRegistry 는 현재 online 상태인 Agent 들의 맵.
+// Hub 프로세스 내 wiring 용 의존성이므로 cmd/hub 에서 참조한다.
+type ConnRegistry struct {
+	mu    sync.Mutex
+	conns map[string]*wsConn
+}
+
+// NewConnRegistry 는 빈 레지스트리를 만든다.
+func NewConnRegistry() *ConnRegistry {
+	return &ConnRegistry{conns: make(map[string]*wsConn)}
+}
+
+// add 는 agent_id 가 이미 online 이면 false 를 반환하고 기존 연결을 건드리지 않는다.
+// 이 경우 호출측이 close code 4003 으로 신규 연결을 거절한다.
+func (r *ConnRegistry) add(c *wsConn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.conns[c.agentID]; exists {
+		return false
+	}
+	r.conns[c.agentID] = c
+	return true
+}
+
+// remove 는 등록된 연결을 제거한다. 현재 엔트리가 other 이면 무시 (경쟁 상황 방어).
+func (r *ConnRegistry) remove(c *wsConn) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cur, ok := r.conns[c.agentID]; ok && cur == c {
+		delete(r.conns, c.agentID)
+	}
+}
+
+// closeAll 은 등록된 모든 연결에 close frame 을 송신하고 cancel 을 트리거한다.
+// Hub graceful shutdown 경로에서 호출.
+func (r *ConnRegistry) closeAll(code websocket.StatusCode, reason string) {
+	r.mu.Lock()
+	items := make([]*wsConn, 0, len(r.conns))
+	for _, c := range r.conns {
+		items = append(items, c)
+	}
+	r.mu.Unlock()
+	for _, c := range items {
+		_ = c.conn.Close(code, reason)
+		c.cancel()
+	}
+}
