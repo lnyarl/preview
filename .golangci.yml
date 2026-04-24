@@ -2,6 +2,14 @@ run:
   go: "1.22"
   timeout: 2m
 
+issues:
+  exclude-files:
+    # sqlc-generated code: style is out of our hands.
+    - "internal/db/sqlite/agents.sql.go"
+    - "internal/db/sqlite/db.go"
+    - "internal/db/sqlite/models.go"
+    - "internal/db/sqlite/querier.go"
+
 linters:
   disable-all: true
   enable:
@@ -11,3 +19,21 @@ linters:
     - gofmt
     - ineffassign
     - unused
+    - depguard
+
+linters-settings:
+  depguard:
+    rules:
+      forbid-sqlite-direct:
+        list-mode: lax
+        files:
+          - "!**/cmd/hub/**"
+          - "**/internal/hub/**"
+          - "**/internal/agent/**"
+          - "**/internal/protocol/**"
+          - "**/internal/store/**"
+        deny:
+          - pkg: "github.com/lnyarl/preview/internal/db/sqlite"
+            desc: "Use internal/store.AgentStore interface; wire concrete impl in cmd/hub only."
+          - pkg: "github.com/lnyarl/preview/internal/db/postgres"
+            desc: "Future Postgres impl -- same boundary."
