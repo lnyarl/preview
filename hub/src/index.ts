@@ -3,7 +3,8 @@ import { loadConfig } from './config.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const app = await buildApp({ config });
+  const bundle = await buildApp({ config });
+  const { app } = bundle;
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, 'shutdown requested');
