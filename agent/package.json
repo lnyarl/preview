@@ -1,0 +1,27 @@
+{
+  "name": "@preview/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "preview-agent": "./dist/bin/agent.js"
+  },
+  "scripts": {
+    "dev": "tsx src/bin/agent.ts",
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "node -e \"import('node:fs').then(({default:fs})=>{const p='dist/bin/agent.js';const s=fs.readFileSync(p,'utf8');if(!s.startsWith('#!'))fs.writeFileSync(p,'#!/usr/bin/env node\\n'+s)})\"",
+    "start": "node dist/bin/agent.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@preview/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
