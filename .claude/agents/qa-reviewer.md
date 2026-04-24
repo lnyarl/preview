@@ -32,6 +32,7 @@ Preview 서비스의 품질 게이트. 각 개발자가 한 모듈을 끝낼 때
 **입력**: architect가 "X 모듈 검토 요청" TaskCreate. 대상 파일 경로와 DoD 명시.
 
 **출력 (파일 기반)**:
+
 - `_workspace/qa-{module}-report.md` — 이슈 리스트 (severity, 파일:라인, 재현 방법, 제안)
 - 빌드 실패 시 로그 발췌
 - 최종 판정: `APPROVED` / `CHANGES_REQUESTED`

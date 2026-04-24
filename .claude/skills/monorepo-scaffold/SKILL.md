@@ -14,13 +14,13 @@ Preview 서비스의 `/hub`, `/agent`, `/shared` 모노레포를 처음 세팅�
 
 ## 도구 선택 기준
 
-| 항목 | 선택 | 이유 |
-|---|---|---|
-| 패키지 매니저 | **pnpm** | workspace 성능, 디스크 효율, Node.js 생태계 표준 |
-| 언어 | TypeScript 5.x | strict mode 필수 |
-| 테스트 | Vitest | TS 네이티브, Jest 호환 API, 빠름 |
-| Lint | ESLint (flat config) + Prettier | 표준 |
-| Node 버전 | 20 LTS | Fastify/dockerode 호환성 검증됨 |
+| 항목          | 선택                            | 이유                                             |
+| ------------- | ------------------------------- | ------------------------------------------------ |
+| 패키지 매니저 | **pnpm**                        | workspace 성능, 디스크 효율, Node.js 생태계 표준 |
+| 언어          | TypeScript 5.x                  | strict mode 필수                                 |
+| 테스트        | Vitest                          | TS 네이티브, Jest 호환 API, 빠름                 |
+| Lint          | ESLint (flat config) + Prettier | 표준                                             |
+| Node 버전     | 20 LTS                          | Fastify/dockerode 호환성 검증됨                  |
 
 ## 최종 구조
 
@@ -112,9 +112,13 @@ const app = Fastify({ logger: true });
 app.get('/', async () => ({ hello: 'hub' }));
 
 const port = Number(process.env.PORT ?? 3000);
-app.listen({ port, host: '0.0.0.0' })
+app
+  .listen({ port, host: '0.0.0.0' })
   .then(() => app.log.info(`Hub listening on ${port}`))
-  .catch((err) => { app.log.error(err); process.exit(1); });
+  .catch((err) => {
+    app.log.error(err);
+    process.exit(1);
+  });
 ```
 
 ### agent/bin/agent.ts (최소 예시)
@@ -138,7 +142,7 @@ services:
       POSTGRES_USER: preview
       POSTGRES_PASSWORD: preview
       POSTGRES_DB: preview
-    ports: ["5432:5432"]
+    ports: ['5432:5432']
     volumes: [pgdata:/var/lib/postgresql/data]
   # hub: (Phase 0 이후 활성화)
 volumes:
@@ -148,6 +152,7 @@ volumes:
 ### .env.example
 
 필수 항목:
+
 - `DATABASE_URL=postgres://preview:preview@localhost:5432/preview`
 - `HUB_PORT=3000`
 - `HUB_PUBLIC_URL=http://localhost:3000`
@@ -161,6 +166,7 @@ volumes:
 ### README.md (Phase 0 버전)
 
 섹션 구성:
+
 1. 한 줄 소개 ("Self-hosted Vercel Preview for GitHub PRs")
 2. 아키텍처 ASCII 다이어그램 (Hub / Agent / GitHub / Docker 관계)
 3. 핵심 설계 결정 요약 (Pull dispatch, outbound WS, 토큰 인증, label 라우팅)

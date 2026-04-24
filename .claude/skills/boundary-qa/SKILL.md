@@ -52,13 +52,13 @@ Preview 서비스는 여러 시스템이 교차하는 분산 시스템이다. �
 
 **핵심 원리**: 한 쪽만 보지 말고 양쪽을 동시에 열어 놓고 형태를 비교한다.
 
-| 경계 | 비교할 양쪽 |
-|---|---|
-| WebSocket 메시지 | `shared/src/messages.ts` Zod ↔ Hub handler ↔ Agent sender |
-| HTTP 요청/응답 | `shared/src/http.ts` ↔ Fastify 라우트 schema ↔ 클라이언트 호출 |
-| DB 스키마 | Prisma/SQL ↔ repository 함수 반환 타입 ↔ API 응답 ↔ UI 타입 |
-| Docker | Agent의 createContainer 옵션 ↔ Hub에 보고하는 port/labels ↔ Reverse proxy의 targetPort 조회 |
-| Webhook | GitHub payload 스펙 ↔ Hub 수신 스키마 ↔ DB 저장 모델 |
+| 경계             | 비교할 양쪽                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| WebSocket 메시지 | `shared/src/messages.ts` Zod ↔ Hub handler ↔ Agent sender                                   |
+| HTTP 요청/응답   | `shared/src/http.ts` ↔ Fastify 라우트 schema ↔ 클라이언트 호출                              |
+| DB 스키마        | Prisma/SQL ↔ repository 함수 반환 타입 ↔ API 응답 ↔ UI 타입                                 |
+| Docker           | Agent의 createContainer 옵션 ↔ Hub에 보고하는 port/labels ↔ Reverse proxy의 targetPort 조회 |
+| Webhook          | GitHub payload 스펙 ↔ Hub 수신 스키마 ↔ DB 저장 모델                                        |
 
 **교차 비교가 아닌 것**: 파일 존재 확인, 함수 선언 확인, import 확인. 이건 "구현했다"는 자기 보고 수준. 교차 비교는 "양쪽이 같은 말을 하는가"를 확인하는 것.
 
@@ -67,6 +67,7 @@ Preview 서비스는 여러 시스템이 교차하는 분산 시스템이다. �
 Job 상태는 `queued → assigned → building → running → teardown → done | failed`.
 
 점검:
+
 - 상태 전이 함수가 존재하고, 허용되지 않은 전이는 에러를 던지는가?
 - DB의 status 컬럼과 코드의 상태 enum이 일치하는가?
 - race 가능성: 두 요청이 동시에 상태를 바꾸려 할 때 어떻게 되나? (트랜잭션, optimistic lock, 조건부 UPDATE)
@@ -81,6 +82,7 @@ Job 상태는 `queued → assigned → building → running → teardown → don
 - [ ] 에러 로깅 (무시 금지)
 
 특히 확인:
+
 - `docker run` → 컨테이너 정리
 - `git clone` → 임시 디렉토리 정리
 - WebSocket 연결 → 재연결 백오프
@@ -114,36 +116,43 @@ pnpm -r test    # 테스트가 있다면
 ```markdown
 # QA Report: {module}
 
-Reviewer: qa-reviewer  |  Date: {YYYY-MM-DD}  |  Verdict: APPROVED | CHANGES_REQUESTED
+Reviewer: qa-reviewer | Date: {YYYY-MM-DD} | Verdict: APPROVED | CHANGES_REQUESTED
 
 ## Summary
+
 한 문단으로 결과 요약.
 
 ## Blocker
+
 (있으면) 병합/다음 단계 진행을 막는 이슈.
+
 - [BUG] {file:line} — {문제 설명} → {제안}
 
 ## Major
+
 주요 이슈 (기능 작동에 문제).
 
 ## Minor
+
 코드 품질, 일관성 이슈.
 
 ## Nit
+
 사소한 것 (선택적).
 
 ## Build Log (failures only)
+
 (실패 시 발췌)
 ```
 
 ## Severity 기준
 
-| Severity | 기준 | 대응 |
-|---|---|---|
-| Blocker | 기능이 동작하지 않거나 빌드 실패, 경계면 불일치로 런타임 에러 | 반드시 수정 |
-| Major | 특정 시나리오에서 실패, race 가능성, 리소스 누수 | 현재 Phase 내 수정 |
-| Minor | 타입 느슨함, 중복 코드, 컨벤션 위반 | 다음 Phase에 모아 수정 가능 |
-| Nit | 네이밍 취향, 주석 등 | 기록만 |
+| Severity | 기준                                                          | 대응                        |
+| -------- | ------------------------------------------------------------- | --------------------------- |
+| Blocker  | 기능이 동작하지 않거나 빌드 실패, 경계면 불일치로 런타임 에러 | 반드시 수정                 |
+| Major    | 특정 시나리오에서 실패, race 가능성, 리소스 누수              | 현재 Phase 내 수정          |
+| Minor    | 타입 느슨함, 중복 코드, 컨벤션 위반                           | 다음 Phase에 모아 수정 가능 |
+| Nit      | 네이밍 취향, 주석 등                                          | 기록만                      |
 
 ## 자주 놓치는 경계면 버그 패턴
 
@@ -172,6 +181,7 @@ grep -oh "case '[A-Z_]\+'" hub/src/ws/**/*.ts | sort -u
 ## 산출물 체크
 
 완료 시:
+
 - [ ] 리포트 파일 작성됨
 - [ ] Verdict 명시됨 (APPROVED / CHANGES_REQUESTED)
 - [ ] CHANGES_REQUESTED인 경우 수정 Task가 TaskCreate로 생성됨

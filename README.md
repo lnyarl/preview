@@ -27,30 +27,30 @@ Vercel Preview의 **셀프호스팅/오픈소스 버전**. GitHub PR이 열리�
 
 ## 핵심 설계 결정
 
-| 결정 | 이유 |
-|---|---|
-| **Pull 방식 디스패치** (Agent→Hub READY) | 자연스러운 백프레셔. Agent가 capacity 있을 때만 일 받음 |
-| **Agent→Hub outbound WebSocket** | Agent 머신에 inbound 포트 불필요. NAT/방화벽 뒤에서도 동작 |
-| **토큰 기반 Agent 인증** | GitHub Actions self-hosted runner 방식. Hub에서 등록·발급, Agent 설치 시 사용 |
-| **Label 기반 라우팅** | PR label → 매칭되는 Agent에만 할당. 로컬 개발 시나리오 대응 |
-| **상태 모델** | `queued → assigned → building → running → teardown → done \| failed` |
+| 결정                                     | 이유                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------- |
+| **Pull 방식 디스패치** (Agent→Hub READY) | 자연스러운 백프레셔. Agent가 capacity 있을 때만 일 받음                       |
+| **Agent→Hub outbound WebSocket**         | Agent 머신에 inbound 포트 불필요. NAT/방화벽 뒤에서도 동작                    |
+| **토큰 기반 Agent 인증**                 | GitHub Actions self-hosted runner 방식. Hub에서 등록·발급, Agent 설치 시 사용 |
+| **Label 기반 라우팅**                    | PR label → 매칭되는 Agent에만 할당. 로컬 개발 시나리오 대응                   |
+| **상태 모델**                            | `queued → assigned → building → running → teardown → done \| failed`          |
 
 상세 결정은 `docs/adr/` 참조.
 
 ## 기술 스택
 
-| 영역 | 선택 |
-|---|---|
-| 언어 | TypeScript 5.x (strict + `exactOptionalPropertyTypes`) |
-| 런타임 | Node.js 20 LTS (권장), ≥20.11 |
-| HTTP | Fastify 4 |
-| DB | PostgreSQL 16 (ORM은 Phase 1에서 결정) |
-| WebSocket | `ws` (Phase 2부터) |
-| Docker 제어 | `dockerode` (Phase 4부터) |
-| 검증 | Zod |
-| 테스트 | Vitest (단위/통합), Playwright (e2e, Phase 6부터) |
-| 패키지 매니저 | pnpm 9.15.0 (workspace) |
-| 로컬 환경 | Docker Compose |
+| 영역          | 선택                                                   |
+| ------------- | ------------------------------------------------------ |
+| 언어          | TypeScript 5.x (strict + `exactOptionalPropertyTypes`) |
+| 런타임        | Node.js 20 LTS (권장), ≥20.11                          |
+| HTTP          | Fastify 4                                              |
+| DB            | PostgreSQL 16 (ORM은 Phase 1에서 결정)                 |
+| WebSocket     | `ws` (Phase 2부터)                                     |
+| Docker 제어   | `dockerode` (Phase 4부터)                              |
+| 검증          | Zod                                                    |
+| 테스트        | Vitest (단위/통합), Playwright (e2e, Phase 6부터)      |
+| 패키지 매니저 | pnpm 9.15.0 (workspace)                                |
+| 로컬 환경     | Docker Compose                                         |
 
 ## 저장소 구조
 
@@ -99,14 +99,14 @@ pnpm dev:agent
 
 루트에서 실행:
 
-| 명령 | 설명 |
-|---|---|
-| `pnpm build` | 전 워크스페이스 TS 컴파일 |
-| `pnpm typecheck` | 컴파일 없이 타입만 검증 |
-| `pnpm lint` | ESLint (flat config) |
-| `pnpm format` / `format:check` | Prettier write / check |
-| `pnpm test` | Vitest 전체 (현재 테스트 케이스 0) |
-| `pnpm dev:hub` / `dev:agent` | 해당 패키지 watch 개발 |
+| 명령                           | 설명                               |
+| ------------------------------ | ---------------------------------- |
+| `pnpm build`                   | 전 워크스페이스 TS 컴파일          |
+| `pnpm typecheck`               | 컴파일 없이 타입만 검증            |
+| `pnpm lint`                    | ESLint (flat config)               |
+| `pnpm format` / `format:check` | Prettier write / check             |
+| `pnpm test`                    | Vitest 전체 (현재 테스트 케이스 0) |
+| `pnpm dev:hub` / `dev:agent`   | 해당 패키지 watch 개발             |
 
 ## Phase 로드맵
 

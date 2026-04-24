@@ -84,4 +84,4 @@ Preview 서비스는 두 런타임 컴포넌트(Hub 서버와 Agent CLI)로 구�
 
 ---
 
-*End of ADR-0001.*
+_End of ADR-0001._

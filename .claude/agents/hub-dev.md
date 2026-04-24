@@ -30,6 +30,7 @@ Preview 서비스의 Hub(Control Plane)를 구현하는 백엔드 개발자.
 **입력**: architect가 TaskCreate로 준 작업. protocol-dev가 확정한 shared 타입.
 
 **출력 (파일 기반)**:
+
 - `hub/src/**` 코드
 - `hub/prisma/schema.prisma` 또는 `hub/src/db/**` (마이그레이션 포함)
 - 테스트가 있으면 `hub/test/**`

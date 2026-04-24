@@ -83,24 +83,24 @@ export type ClientMessage = z.infer<typeof ClientMessage>;
 
 ### Client → Server (Agent → Hub)
 
-| type | 목적 |
-|---|---|
-| `AGENT_HELLO` | 연결 직후 인증 토큰 + 프로토콜 버전 |
-| `AGENT_READY` | "작업 받을 준비됨" (pull 요청) |
-| `JOB_STATUS` | 상태 전이 보고 (`building`, `running`, `teardown`, `done`, `failed`) |
-| `JOB_LOG` | 로그 샘플 (레벨, 메시지, jobId) |
-| `JOB_URL` | 프리뷰 URL 보고 (jobId, port, url) |
-| `HEARTBEAT` | 주기적 생존 신호 |
+| type          | 목적                                                                 |
+| ------------- | -------------------------------------------------------------------- |
+| `AGENT_HELLO` | 연결 직후 인증 토큰 + 프로토콜 버전                                  |
+| `AGENT_READY` | "작업 받을 준비됨" (pull 요청)                                       |
+| `JOB_STATUS`  | 상태 전이 보고 (`building`, `running`, `teardown`, `done`, `failed`) |
+| `JOB_LOG`     | 로그 샘플 (레벨, 메시지, jobId)                                      |
+| `JOB_URL`     | 프리뷰 URL 보고 (jobId, port, url)                                   |
+| `HEARTBEAT`   | 주기적 생존 신호                                                     |
 
 ### Server → Client (Hub → Agent)
 
-| type | 목적 |
-|---|---|
-| `SERVER_HELLO` | Hello 응답, 프로토콜 수락/거부 |
-| `JOB_ASSIGNED` | 작업 할당 (repo, commit, labels) |
-| `JOB_CANCEL` | 진행 중 작업 취소 지시 |
-| `TEARDOWN` | PR 닫혔을 때 해당 컨테이너 정리 지시 |
-| `DISCONNECT` | 연결 종료 (reason 포함) |
+| type           | 목적                                 |
+| -------------- | ------------------------------------ |
+| `SERVER_HELLO` | Hello 응답, 프로토콜 수락/거부       |
+| `JOB_ASSIGNED` | 작업 할당 (repo, commit, labels)     |
+| `JOB_CANCEL`   | 진행 중 작업 취소 지시               |
+| `TEARDOWN`     | PR 닫혔을 때 해당 컨테이너 정리 지시 |
+| `DISCONNECT`   | 연결 종료 (reason 포함)              |
 
 ## 작성 플로우
 
@@ -122,13 +122,20 @@ import { ClientMessage } from '@preview/shared';
 
 ws.on('message', (raw) => {
   const parsed = ClientMessage.safeParse(JSON.parse(raw.toString()));
-  if (!parsed.success) { /* reject + log */ return; }
+  if (!parsed.success) {
+    /* reject + log */ return;
+  }
   const msg = parsed.data;
   switch (msg.type) {
-    case 'AGENT_READY': /* ... */ break;
-    case 'JOB_STATUS':  /* ... */ break;
+    case 'AGENT_READY':
+      /* ... */ break;
+    case 'JOB_STATUS':
+      /* ... */ break;
     // exhaustive: msg를 never에 할당해서 컴파일 체크
-    default: { const _exhaust: never = msg; void _exhaust; }
+    default: {
+      const _exhaust: never = msg;
+      void _exhaust;
+    }
   }
 });
 ```

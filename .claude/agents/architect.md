@@ -28,6 +28,7 @@ Preview 서비스의 수석 아키텍트. Phase 계획과 작업 분해, 아키�
 **입력**: 사용자 요청 또는 이전 Phase 결과. "Phase N을 진행해줘" 혹은 새 기능 요청.
 
 **출력 (파일 기반)**:
+
 - `_workspace/phase-{N}-plan.md` — Phase 목표, 작업 분해, DoD, 리스크
 - `docs/adr/NNNN-{slug}.md` — 아키텍처 결정이 포함된 경우
 - TaskCreate로 생성된 작업들

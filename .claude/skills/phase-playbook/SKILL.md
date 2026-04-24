@@ -19,13 +19,13 @@ Preview 서비스는 Phase 단위로 기능을 붙여간다. 이 스킬은 한 P
 
 이 프로젝트의 고정 팀은 다음과 같다:
 
-| 에이전트 | 역할 | 담당 패키지 |
-|---|---|---|
-| `architect` | Phase 계획, 아키텍처 결정, 작업 분해, ADR | `docs/adr` |
-| `protocol-dev` | 메시지 프로토콜/공유 타입 | `/shared` |
-| `hub-dev` | Hub 서버·DB·WebSocket·프록시·대시보드 | `/hub` |
-| `agent-dev` | Agent CLI·Docker·WebSocket 클라이언트 | `/agent` |
-| `qa-reviewer` | 경계면 검증·빌드 검증·설계 일관성 | 전체 |
+| 에이전트       | 역할                                      | 담당 패키지 |
+| -------------- | ----------------------------------------- | ----------- |
+| `architect`    | Phase 계획, 아키텍처 결정, 작업 분해, ADR | `docs/adr`  |
+| `protocol-dev` | 메시지 프로토콜/공유 타입                 | `/shared`   |
+| `hub-dev`      | Hub 서버·DB·WebSocket·프록시·대시보드     | `/hub`      |
+| `agent-dev`    | Agent CLI·Docker·WebSocket 클라이언트     | `/agent`    |
+| `qa-reviewer`  | 경계면 검증·빌드 검증·설계 일관성         | 전체        |
 
 ## 실행 플로우
 
@@ -97,12 +97,12 @@ qa-reviewer가 `CHANGES_REQUESTED`면 원작자에게 수정 Task 생성. `APPRO
 
 ## 에러 핸들링
 
-| 상황 | 대응 |
-|---|---|
-| 작업이 두 번 연속 실패 | architect에게 작업 분해 재검토 요청 후 재할당 |
-| 팀원 간 설계 충돌 | 양측 근거를 파일로 요약 → architect 중재 |
-| 빌드 실패 | qa-reviewer가 로그 발췌 → 원작자에게 수정 Task |
-| 범위 초과 감지 | 사용자에게 즉시 보고, 현재 Phase 범위 축소 제안 |
+| 상황                   | 대응                                            |
+| ---------------------- | ----------------------------------------------- |
+| 작업이 두 번 연속 실패 | architect에게 작업 분해 재검토 요청 후 재할당   |
+| 팀원 간 설계 충돌      | 양측 근거를 파일로 요약 → architect 중재        |
+| 빌드 실패              | qa-reviewer가 로그 발췌 → 원작자에게 수정 Task  |
+| 범위 초과 감지         | 사용자에게 즉시 보고, 현재 Phase 범위 축소 제안 |
 
 ## 모델 설정
 
@@ -111,12 +111,14 @@ qa-reviewer가 `CHANGES_REQUESTED`면 원작자에게 수정 Task 생성. `APPRO
 ## 테스트 시나리오
 
 **정상 흐름** (Phase 1: Webhook 수신 구현):
+
 1. architect가 plan 작성: shared에 Webhook payload 타입 추가 → hub에 엔드포인트 추가 → DB에 PR 테이블
 2. protocol-dev가 shared 타입 먼저 작성 (다른 작업의 blocker)
 3. hub-dev가 병렬로 DB 스키마와 엔드포인트 구현
 4. qa-reviewer가 각 완료마다 검토 → APPROVED → Phase 종료
 
 **에러 흐름** (프로토콜 충돌):
+
 1. hub-dev와 agent-dev가 동시에 shared 변경 요청
 2. protocol-dev가 두 요청의 스키마 충돌 발견 → architect에게 에스컬레이션
 3. architect가 ADR로 결정 → protocol-dev 작업 → 양쪽 개발자 재개

@@ -20,37 +20,38 @@ Vercel Preview의 셀프호스팅/오픈소스 버전. GitHub PR이 열릴 때�
 ```
 
 **두 컴포넌트**:
+
 - **Hub** (`/hub`) — GitHub Webhook 수신, DB, WebSocket 서버, Agent 분배, Reverse Proxy, 관리자 대시보드
 - **Agent** (`/agent`) — Hub에 outbound 연결, Pull 방식 작업 수신, Docker 컨테이너 생명주기 관리
 
 ## 핵심 설계 결정
 
-| 결정 | 이유 |
-|---|---|
-| **Pull 방식 디스패치** (Agent→Hub READY) | 자연스러운 백프레셔. Agent가 capacity 있을 때만 일 받음 |
-| **Agent→Hub outbound WebSocket** | Agent 머신에 inbound 포트 불필요. NAT/방화벽 뒤에서도 동작 |
-| **토큰 기반 Agent 인증** | GitHub Actions self-hosted runner 방식. Hub에서 등록·발급, Agent 설치 시 사용 |
-| **Label 기반 라우팅** | PR에 label 지정 → 매칭되는 Agent에만 할당. 로컬 개발 시나리오 대응 |
-| **상태 모델** | `queued → assigned → building → running → teardown → done \| failed` |
+| 결정                                     | 이유                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------- |
+| **Pull 방식 디스패치** (Agent→Hub READY) | 자연스러운 백프레셔. Agent가 capacity 있을 때만 일 받음                       |
+| **Agent→Hub outbound WebSocket**         | Agent 머신에 inbound 포트 불필요. NAT/방화벽 뒤에서도 동작                    |
+| **토큰 기반 Agent 인증**                 | GitHub Actions self-hosted runner 방식. Hub에서 등록·발급, Agent 설치 시 사용 |
+| **Label 기반 라우팅**                    | PR에 label 지정 → 매칭되는 Agent에만 할당. 로컬 개발 시나리오 대응            |
+| **상태 모델**                            | `queued → assigned → building → running → teardown → done \| failed`          |
 
 상세 결정은 `docs/adr/` 참조.
 
 ## 기술 스택
 
-| 영역 | 선택 |
-|---|---|
-| 언어 | TypeScript 5.x (strict mode) |
-| 런타임 | Node.js 20 LTS |
-| HTTP | Fastify |
-| DB | PostgreSQL 16 (ORM은 Phase 1에서 결정 — Prisma vs Kysely) |
-| WebSocket | `ws` |
-| Docker 제어 | `dockerode` |
-| Reverse Proxy | `http-proxy` 또는 Fastify 플러그인 |
-| 검증 | Zod (공유 메시지 스키마) |
-| 테스트 | Vitest |
-| 패키지 매니저 | pnpm (workspace) |
-| 로컬 환경 | Docker Compose (Postgres + Hub) |
-| 프론트엔드 | Phase 1에서 결정 (HTMX+SSR vs 간단한 React) |
+| 영역          | 선택                                                      |
+| ------------- | --------------------------------------------------------- |
+| 언어          | TypeScript 5.x (strict mode)                              |
+| 런타임        | Node.js 20 LTS                                            |
+| HTTP          | Fastify                                                   |
+| DB            | PostgreSQL 16 (ORM은 Phase 1에서 결정 — Prisma vs Kysely) |
+| WebSocket     | `ws`                                                      |
+| Docker 제어   | `dockerode`                                               |
+| Reverse Proxy | `http-proxy` 또는 Fastify 플러그인                        |
+| 검증          | Zod (공유 메시지 스키마)                                  |
+| 테스트        | Vitest                                                    |
+| 패키지 매니저 | pnpm (workspace)                                          |
+| 로컬 환경     | Docker Compose (Postgres + Hub)                           |
+| 프론트엔드    | Phase 1에서 결정 (HTMX+SSR vs 간단한 React)               |
 
 ## 모노레포 구조
 
@@ -91,15 +92,16 @@ Vercel Preview의 셀프호스팅/오픈소스 버전. GitHub PR이 열릴 때�
 
 이 프로젝트는 **전문 에이전트 팀** 하네스로 작업한다. `/preview-team`이 고정 팀:
 
-| 에이전트 | 담당 |
-|---|---|
-| `architect` | Phase 계획·ADR·작업 분해 |
-| `protocol-dev` | `/shared` 전담 (메시지·타입·Zod) |
-| `hub-dev` | `/hub` (서버·DB·WS·프록시·대시보드) |
-| `agent-dev` | `/agent` (CLI·Docker·WS 클라이언트) |
-| `qa-reviewer` | 경계면 정합성·빌드·설계 일관성 |
+| 에이전트       | 담당                                |
+| -------------- | ----------------------------------- |
+| `architect`    | Phase 계획·ADR·작업 분해            |
+| `protocol-dev` | `/shared` 전담 (메시지·타입·Zod)    |
+| `hub-dev`      | `/hub` (서버·DB·WS·프록시·대시보드) |
+| `agent-dev`    | `/agent` (CLI·Docker·WS 클라이언트) |
+| `qa-reviewer`  | 경계면 정합성·빌드·설계 일관성      |
 
 스킬:
+
 - **`/phase-playbook`** — Phase 진행 오케스트레이터. 새 Phase 시작 시 호출.
 - **`/monorepo-scaffold`** — 모노레포 초기 구조 (Phase 0 전용).
 - **`/ws-protocol-design`** — WebSocket 메시지 추가·변경.
@@ -108,6 +110,7 @@ Vercel Preview의 셀프호스팅/오픈소스 버전. GitHub PR이 열릴 때�
 ### 새 Phase 시작 시
 
 사용자가 "Phase N 진행해줘"라고 하면 `phase-playbook` 스킬을 통해:
+
 1. `architect`가 `_workspace/phase-{N}-plan.md` 작성 + 작업 분해 + ADR 필요 시 작성
 2. `protocol-dev`가 먼저 `/shared` 변경 (다른 작업의 블로커)
 3. `hub-dev` / `agent-dev`가 병렬 구현
@@ -142,6 +145,7 @@ pnpm --filter @preview/agent start  # Agent 실행 (다른 터미널)
 - 중간 산출물: `_workspace/` (팀 작업 추적용, gitignored)
 
 ## 작업 방식
+
 - 코드 작성전에 항상 기획서를 작성한다.
 - 기획서는 md파일로 저장되어야 한다.
 - 기획서는 반드시 리뷰를 거치고 수정하여 최대한 불확실성이 없도록 한다. 리뷰는 다른 에이전트가 해야한다.

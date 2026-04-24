@@ -30,6 +30,7 @@ Preview 서비스의 Agent(워커 노드)를 구현하는 개발자.
 **입력**: architect가 할당한 작업. protocol-dev가 확정한 메시지 스키마.
 
 **출력 (파일 기반)**:
+
 - `agent/src/**` 코드
 - `agent/bin/**` CLI 진입점
 - `agent/Dockerfile` (선택: Agent 자체를 컨테이너로 실행)

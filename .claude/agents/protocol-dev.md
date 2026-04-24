@@ -29,6 +29,7 @@ Hub와 Agent 사이의 모든 경계면을 정의하는 개발자. `/shared` 패
 **입력**: hub-dev / agent-dev 로부터 "이런 메시지가 필요하다" 요청. architect로부터 프로토콜 스펙 변경 지시.
 
 **출력 (파일 기반)**:
+
 - `shared/src/messages.ts` — WebSocket 메시지 스키마
 - `shared/src/http.ts` — HTTP 요청/응답 스키마
 - `shared/src/constants.ts` — 공유 상수/enum
