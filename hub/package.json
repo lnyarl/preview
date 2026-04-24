@@ -8,15 +8,31 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "migrate": "tsx src/bin/migrate.ts",
+    "migrate:down": "tsx src/bin/migrate-down.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@fastify/formbody": "^7.4.0",
+    "@fastify/view": "^8.2.0",
+    "@fastify/websocket": "^10.0.1",
     "@preview/shared": "workspace:*",
-    "fastify": "^4.28.0"
+    "bcryptjs": "^2.4.3",
+    "fastify": "^4.28.0",
+    "handlebars": "^4.7.8",
+    "kysely": "^0.27.4",
+    "nanoid": "^5.0.0",
+    "pg": "^8.13.0",
+    "pino": "^9.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.16.0",
+    "@types/pg": "^8.11.0",
+    "pg-mem": "^3.0.0",
+    "pino-pretty": "^11.2.2",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
