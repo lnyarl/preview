@@ -2,7 +2,13 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    // Spec §2.3 B1 / impl note E2:
+    // Fastify 4's FastifyBaseLogger.child() and some @fastify/websocket hook
+    // option types conflict with exactOptionalPropertyTypes. Disabling at the
+    // hub-package level until we promote to Fastify 5 (Phase 2 reassessment
+    // per Q11). Other strict flags remain enabled.
+    "exactOptionalPropertyTypes": false
   },
   "include": ["src/**/*"]
 }

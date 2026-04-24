@@ -4,19 +4,13 @@ import { loadConfig } from './config.js';
 async function main(): Promise<void> {
   const config = loadConfig();
   const bundle = await buildApp({ config });
-  const { app } = bundle;
+  const { app, gracefulShutdown } = bundle;
 
-  const shutdown = async (signal: string): Promise<void> => {
-    app.log.info({ signal }, 'shutdown requested');
-    try {
-      await app.close();
-    } catch (err) {
-      app.log.error({ err }, 'error during shutdown');
-    }
-    process.exit(0);
+  const handle = (signal: string): void => {
+    void gracefulShutdown(signal).then(() => process.exit(0));
   };
-  process.once('SIGINT', () => void shutdown('SIGINT'));
-  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => handle('SIGINT'));
+  process.once('SIGTERM', () => handle('SIGTERM'));
 
   try {
     await app.listen({ port: config.HUB_PORT, host: '0.0.0.0' });

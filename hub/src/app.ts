@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import view from '@fastify/view';
+import websocket from '@fastify/websocket';
 import handlebars from 'handlebars';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,7 @@ import { AgentRegistry } from './services/agent-registry.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerAdminApi } from './routes/admin-api.js';
 import { registerAdminUi } from './routes/admin-ui.js';
+import { registerAgentWs } from './routes/agent-ws.js';
 
 export interface AppDeps {
   config: AppConfig;
@@ -23,6 +25,7 @@ export interface AppBundle {
   db: Db;
   agentsRepo: AgentsRepo;
   registry: AgentRegistry;
+  gracefulShutdown(signal: string): Promise<void>;
 }
 
 function viewsDir(): string {
@@ -52,6 +55,9 @@ export async function buildApp(deps: AppDeps): Promise<AppBundle> {
     defaultContext: {},
     viewExt: 'hbs',
   });
+  await app.register(websocket, {
+    options: { maxPayload: 16 * 1024 },
+  });
 
   const pool = createPool(config.DATABASE_URL);
   const db = createDb(pool);
@@ -70,8 +76,14 @@ export async function buildApp(deps: AppDeps): Promise<AppBundle> {
 
   await registerAdminApi(app, { agentsRepo, bcryptCost: config.BCRYPT_COST, registry });
   await registerAdminUi(app, { agentsRepo, bcryptCost: config.BCRYPT_COST, registry });
+  await registerAgentWs(app, {
+    agentsRepo,
+    registry,
+    heartbeatIntervalMs: config.HEARTBEAT_INTERVAL_MS,
+    heartbeatMissLimit: config.HEARTBEAT_MISS_LIMIT,
+  });
 
-  // Hub startup: reconcile potentially stale "online" rows from a prior crash (B3).
+  // Startup reconciliation: anything marked online from a previous process is stale (B3).
   const reset = await agentsRepo.bulkOffline();
   if (reset > 0) {
     app.log.warn({ reset }, 'reset stale online agents to offline on startup');
@@ -81,5 +93,39 @@ export async function buildApp(deps: AppDeps): Promise<AppBundle> {
     await db.destroy();
   });
 
-  return { app, pool, db, agentsRepo, registry };
+  let shuttingDown = false;
+  async function gracefulShutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.log.info({ signal }, 'graceful shutdown start');
+
+    // (1) Disconnect active WS agents with SERVER_SHUTDOWN, then (2) bulk offline, (3) close Fastify.
+    const sentAt = Date.now();
+    for (const conn of registry.all()) {
+      try {
+        conn.ws.send(JSON.stringify({ type: 'DISCONNECT', reason: 'SERVER_SHUTDOWN', sentAt }));
+      } catch {
+        /* ignore */
+      }
+      try {
+        conn.ws.close(1001, 'server-shutdown');
+      } catch {
+        /* ignore */
+      }
+    }
+
+    try {
+      await agentsRepo.bulkOffline();
+    } catch (err) {
+      app.log.warn({ err }, 'bulkOffline on shutdown failed');
+    }
+
+    try {
+      await app.close();
+    } catch (err) {
+      app.log.error({ err }, 'fastify close failed');
+    }
+  }
+
+  return { app, pool, db, agentsRepo, registry, gracefulShutdown };
 }
