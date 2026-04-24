@@ -36,7 +36,7 @@ go test ./... -count=1
 각 `F-N` 항목의 "검증 방법"을 실제로 실행.
 
 예시 유형:
-- 엔드포인트: `curl -s -w '\nHTTP:%{http_code}\n' http://localhost:8080/...` 로 status·body 확인.
+- 엔드포인트: `curl -s -w '\nHTTP:%{http_code}\n' http://localhost:3000/...` 로 status·body 확인.
 - CLI: `./bin/hub` 실행 후 stdout·exit code 확인.
 - DB: 쿼리 실행 후 결과 row 확인.
 - 파일 생성: `ls`, `cat`으로 내용 확인.
