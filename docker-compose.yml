@@ -4,8 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile.hub
     command: ["migrate", "up"]
+    env_file: .env
     environment:
-      DATABASE_URL: "sqlite:///data/hub.db"
+      DATABASE_URL: "sqlite:///data/hub.db"   # 컨테이너 내부 경로 (볼륨 마운트)
     volumes:
       - hub-data:/data
 
@@ -15,20 +16,11 @@ services:
       dockerfile: Dockerfile.hub
     ports:
       - "${HUB_ADDR:-3000}:3000"
+    env_file: .env
     environment:
-      HUB_ADDR: ":3000"
-      DATABASE_URL: "sqlite:///data/hub.db"
-      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
-      PREVIEW_BASE_DOMAIN: "${PREVIEW_BASE_DOMAIN:-localhost}"
-      PREVIEW_REPO_URL: "${PREVIEW_REPO_URL:-}"
-      LOG_LEVEL: "${LOG_LEVEL:-info}"
-      RECONCILE_INTERVAL: "${RECONCILE_INTERVAL:-1m}"
-      STALE_ASSIGNED_AFTER: "${STALE_ASSIGNED_AFTER:-5m}"
-      # Agent 바이너리 다운로드 base URL — 토큰 페이지에 OS별 다운로드 명령 표시
-      AGENT_DOWNLOAD_URL: "${AGENT_DOWNLOAD_URL:-}"
-      # 개발용 Agent 자동 등록 — Hub 시작 시 "dev-agent" 를 이 토큰으로 자동 생성
-      DEV_AGENT_TOKEN: "dev-local-token-do-not-use-in-prod"
+      HUB_ADDR: ":3000"                                      # 컨테이너 내부는 항상 3000
+      DATABASE_URL: "sqlite:///data/hub.db"                  # 컨테이너 내부 경로
+      DEV_AGENT_TOKEN: "dev-local-token-do-not-use-in-prod"  # 고정 dev 토큰
     volumes:
       - hub-data:/data
     depends_on:
@@ -45,6 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
+    env_file: .env
     command:
       - start
       - --hub-url=ws://hub:3000/agent/ws
