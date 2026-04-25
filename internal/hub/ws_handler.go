@@ -187,6 +187,10 @@ func (h *WSHandler) session(parentCtx context.Context, conn *websocket.Conn, age
 		return
 	}
 
+	// Phase 4: WELCOME 직후 AGENT_CONFIG 1회 송신 (§4-6).
+	// 실패는 warn 로그만 — Agent 가 기본값으로 동작하므로 치명적이지 않다.
+	h.sendAgentConfig(connCtx, conn, agent.ID)
+
 	// Phase 3: HELLO 동기화 (running_previews 비교) — 별도 goroutine.
 	// 실패는 로그만, session 진행에 영향 없음.
 	go h.syncOnHello(connCtx, agent.ID, helloData, helloRaw)
@@ -410,6 +414,38 @@ func writeEnvelope(ctx context.Context, conn *websocket.Conn, env protocol.Envel
 		return err
 	}
 	return conn.Write(ctx, websocket.MessageText, b)
+}
+
+// sendAgentConfig 는 HELLO/WELCOME 직후 AGENT_CONFIG 를 1회 송신한다 (Phase 4 §4-6).
+//
+// 실패 시 정책: warn 로그 + session 계속 (WELCOME 실패와 비대칭).
+// 이유: 기본값으로 Agent 가 동작 가능하므로 치명적이지 않음.
+//   - GetBuildConfig 실패 (DB 오류): 송신 자체를 스킵.
+//   - Write 실패 (TCP 일시 장애): 송신만 실패. 다음 HELLO 가 재시도하므로 session 유지.
+//
+// 본 메서드는 SendAgentConfig (WSJobSender) 와 별개로, 레지스트리 등록 시점
+// race 를 회피하기 위해 conn 핸들에 직접 쓴다.
+func (h *WSHandler) sendAgentConfig(ctx context.Context, conn *websocket.Conn, agentID string) {
+	cmds, port, err := h.Store.GetBuildConfig(ctx, agentID)
+	if err != nil {
+		h.Logger.Warn("agent_config_fetch_failed", "agent_id", agentID, "err", err.Error())
+		return
+	}
+	cfg := protocol.AgentConfigData{BuildCommands: cmds, ContainerPort: port}
+	env, err := protocol.NewEnvelope(protocol.TypeAgentConfig, cfg)
+	if err != nil {
+		h.Logger.Warn("agent_config_encode_failed", "agent_id", agentID, "err", err.Error())
+		return
+	}
+	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := writeEnvelope(wctx, conn, env); err != nil {
+		// Warn-and-continue 정책: AGENT_CONFIG 실패는 비치명적.
+		h.Logger.Warn("agent_config_send_failed", "agent_id", agentID, "err", err.Error())
+		return
+	}
+	h.Logger.Debug("agent_config_sent",
+		"agent_id", agentID, "commands", len(cmds), "port", port)
 }
 
 // disconnectReason 은 로그용. connCtx 취소 사유 추정.

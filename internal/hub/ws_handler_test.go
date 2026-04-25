@@ -22,12 +22,18 @@ import (
 // ---------- in-memory AgentStore for tests ----------
 
 type memStore struct {
-	mu    sync.Mutex
-	items map[string]*store.Agent
+	mu     sync.Mutex
+	items  map[string]*store.Agent
+	bcRaw  map[string]string
+	bcPort map[string]int
 }
 
 func newMemStore() *memStore {
-	return &memStore{items: map[string]*store.Agent{}}
+	return &memStore{
+		items:  map[string]*store.Agent{},
+		bcRaw:  map[string]string{},
+		bcPort: map[string]int{},
+	}
 }
 
 func (m *memStore) Create(_ context.Context, a store.Agent) error {
@@ -89,6 +95,41 @@ func (m *memStore) Delete(_ context.Context, id string) error {
 		return store.ErrNotFound
 	}
 	delete(m.items, id)
+	delete(m.bcRaw, id)
+	delete(m.bcPort, id)
+	return nil
+}
+
+// Phase 4 stub.
+func (m *memStore) GetBuildConfig(_ context.Context, id string) ([]string, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.items[id]; !ok {
+		return nil, 0, store.ErrNotFound
+	}
+	raw := m.bcRaw[id]
+	port := m.bcPort[id]
+	cmds := []string{}
+	if raw != "" {
+		for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			cmds = append(cmds, line)
+		}
+	}
+	return cmds, port, nil
+}
+
+func (m *memStore) SaveBuildConfig(_ context.Context, id, raw string, port int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.items[id]; !ok {
+		return store.ErrNotFound
+	}
+	m.bcRaw[id] = raw
+	m.bcPort[id] = port
 	return nil
 }
 
@@ -214,12 +255,65 @@ func TestWSHandshakeSuccess(t *testing.T) {
 	if env.Type != protocol.TypeWelcome {
 		t.Fatalf("got type=%s want WELCOME", env.Type)
 	}
+	// Phase 4: WELCOME 직후 AGENT_CONFIG 1회 송신 (§4-6).
+	cfgEnv := readEnv(t, conn)
+	if cfgEnv.Type != protocol.TypeAgentConfig {
+		t.Fatalf("expected AGENT_CONFIG after WELCOME, got %s", cfgEnv.Type)
+	}
+	var cfg protocol.AgentConfigData
+	if err := cfgEnv.Decode(&cfg); err != nil {
+		t.Fatalf("decode AGENT_CONFIG: %v", err)
+	}
+	// 신규 등록 agent → DB sentinel ([], 0).
+	if len(cfg.BuildCommands) != 0 {
+		t.Fatalf("expected empty BuildCommands, got %v", cfg.BuildCommands)
+	}
+	if cfg.ContainerPort != 0 {
+		t.Fatalf("expected ContainerPort=0, got %d", cfg.ContainerPort)
+	}
 
 	// Status should be online shortly.
 	waitFor(t, 2*time.Second, func() bool {
 		a, err := s.GetByID(context.Background(), id)
 		return err == nil && a.Status == "online"
 	})
+}
+
+// TestWSAgentConfigSentWithStoredValues — Phase 4 F-20: 저장된 값이 있는 Agent 에 대한
+// AGENT_CONFIG payload 확인.
+func TestWSAgentConfigSentWithStoredValues(t *testing.T) {
+	wsh, s, id, raw := newTestHandler(t)
+	// 저장 값 주입.
+	if err := s.SaveBuildConfig(context.Background(), id, "npm ci\nnpm run build", 3000); err != nil {
+		t.Fatalf("SaveBuildConfig: %v", err)
+	}
+	srv := startTestServer(t, wsh)
+	defer srv.Close()
+
+	conn, _, err := dialWS(t, srv, raw)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+
+	writeEnv(t, conn, protocol.TypeHello, protocol.HelloData{Version: protocol.ProtoVersion})
+	if env := readEnv(t, conn); env.Type != protocol.TypeWelcome {
+		t.Fatalf("welcome missing: %s", env.Type)
+	}
+	cfgEnv := readEnv(t, conn)
+	if cfgEnv.Type != protocol.TypeAgentConfig {
+		t.Fatalf("expected AGENT_CONFIG, got %s", cfgEnv.Type)
+	}
+	var cfg protocol.AgentConfigData
+	if err := cfgEnv.Decode(&cfg); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(cfg.BuildCommands) != 2 || cfg.BuildCommands[0] != "npm ci" || cfg.BuildCommands[1] != "npm run build" {
+		t.Fatalf("BuildCommands=%v", cfg.BuildCommands)
+	}
+	if cfg.ContainerPort != 3000 {
+		t.Fatalf("ContainerPort=%d want 3000", cfg.ContainerPort)
+	}
 }
 
 func TestWSHandshakeVersionMismatch(t *testing.T) {
@@ -263,6 +357,10 @@ func TestWSDuplicateConnection(t *testing.T) {
 	if env := readEnv(t, conn1); env.Type != protocol.TypeWelcome {
 		t.Fatalf("conn1 welcome missing: %s", env.Type)
 	}
+	// Phase 4: drain AGENT_CONFIG.
+	if env := readEnv(t, conn1); env.Type != protocol.TypeAgentConfig {
+		t.Fatalf("conn1 expected AGENT_CONFIG, got %s", env.Type)
+	}
 
 	// Second connection, same token.
 	conn2, _, err := dialWS(t, srv, raw)
@@ -299,6 +397,10 @@ func TestWSGracefulShutdown(t *testing.T) {
 	writeEnv(t, conn, protocol.TypeHello, protocol.HelloData{Version: protocol.ProtoVersion})
 	if env := readEnv(t, conn); env.Type != protocol.TypeWelcome {
 		t.Fatalf("welcome missing: %s", env.Type)
+	}
+	// Phase 4: drain AGENT_CONFIG.
+	if env := readEnv(t, conn); env.Type != protocol.TypeAgentConfig {
+		t.Fatalf("expected AGENT_CONFIG, got %s", env.Type)
 	}
 
 	// Server graceful shutdown uses the registry from the handler.
