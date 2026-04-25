@@ -13,8 +13,14 @@ type Querier interface {
 	DeleteAgent(ctx context.Context, id string) error
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
 	GetAgentByName(ctx context.Context, name string) (Agent, error)
+	GetPreviewByID(ctx context.Context, id string) (Preview, error)
+	GetPreviewByRepoAndPR(ctx context.Context, arg GetPreviewByRepoAndPRParams) (Preview, error)
+	InsertPreviewEvent(ctx context.Context, arg InsertPreviewEventParams) error
 	ListAgents(ctx context.Context) ([]Agent, error)
+	ListAllPreviews(ctx context.Context) ([]Preview, error)
 	UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) error
+	UpdatePreviewStatus(ctx context.Context, arg UpdatePreviewStatusParams) error
+	UpsertPreview(ctx context.Context, arg UpsertPreviewParams) (Preview, error)
 }
 
 var _ Querier = (*Queries)(nil)

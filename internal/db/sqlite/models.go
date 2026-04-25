@@ -17,3 +17,30 @@ type Agent struct {
 	LastSeenAt sql.NullString `json:"last_seen_at"`
 	CreatedAt  string         `json:"created_at"`
 }
+
+type Preview struct {
+	ID              string         `json:"id"`
+	RepoFullName    string         `json:"repo_full_name"`
+	PrNumber        int64          `json:"pr_number"`
+	CommitSha       string         `json:"commit_sha"`
+	Branch          string         `json:"branch"`
+	Status          string         `json:"status"`
+	AssignedAgentID sql.NullString `json:"assigned_agent_id"`
+	ContainerID     sql.NullString `json:"container_id"`
+	AgentHost       sql.NullString `json:"agent_host"`
+	AgentPort       sql.NullInt64  `json:"agent_port"`
+	PublicUrl       sql.NullString `json:"public_url"`
+	Labels          string         `json:"labels"`
+	ErrorMessage    sql.NullString `json:"error_message"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       string         `json:"updated_at"`
+}
+
+type PreviewEvent struct {
+	ID         string         `json:"id"`
+	PreviewID  string         `json:"preview_id"`
+	FromStatus sql.NullString `json:"from_status"`
+	ToStatus   string         `json:"to_status"`
+	Message    string         `json:"message"`
+	CreatedAt  string         `json:"created_at"`
+}
