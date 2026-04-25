@@ -27,15 +27,14 @@
   <h3>Run Commands</h3>
   <form method="POST" action="/admin/agents/{{.AgentID}}/config">
     <label for="run_commands">Run commands (one per line)</label>
-    <textarea id="run_commands" name="run_commands" rows="6"
-              placeholder="npm install&#10;npm run build&#10;./deploy.sh">{{.RunCommandsText}}</textarea>
-    <small>Each line runs as <code>sh -c &lt;line&gt;</code> in the directory where the repository was checked out. Non-zero exit aborts the run. Leave empty to skip.</small>
+    <textarea id="run_commands" name="run_commands" rows="6">{{.RunCommandsText}}</textarea>
+    <small>Each line runs as <code>sh -c &lt;line&gt;</code> in the directory where the repository was checked out. Non-zero exit aborts the run.</small>
 
     <label for="container_port">Container port</label>
     <input type="number" id="container_port" name="container_port"
-           min="1" max="65535" placeholder="80"
-           {{if gt .ContainerPort 0}}value="{{.ContainerPort}}"{{end}}>
-    <small>Port the application listens on inside the container. Empty / 0 / out-of-range = default 80.</small>
+           min="1" max="65535"
+           value="{{if gt .ContainerPort 0}}{{.ContainerPort}}{{else}}80{{end}}">
+    <small>Port the application listens on inside the container. 0 / out-of-range = default 80.</small>
 
     <button type="submit">Save</button>
   </form>
