@@ -1,10 +1,12 @@
 // 이 파일의 책임:
-//   - JOB_ASSIGN 수신 시 building → 셸 빌드 명령 실행 → docker run → STATUS_UPDATE running 송신.
+//   - JOB_ASSIGN 수신 시 building → 셸 run 명령 실행 → docker run → STATUS_UPDATE running 송신.
 //   - JOB_TEARDOWN 수신 시 컨테이너 stop+rm → worktree remove → STATUS_UPDATE done 송신.
 //   - 동적 포트 할당 (net.Listen ":0") + 1회 재시도 (결정 8, F-S2-14).
 //   - jobs map: previewID → 메모리 상태 (containerID, port, worktree). 재시작 복원은 Step 3 이월.
-//   - Phase 4: 빌드 명령을 셸로 실행 (`sh -c <line>`), 컨테이너 포트는 Holder.Snapshot 으로
+//   - Phase 4: run 명령을 셸로 실행 (`sh -c <line>`), 컨테이너 포트는 Holder.Snapshot 으로
 //     결정. Dockerfile 강제 검사는 제거 (결정 4).
+//   - run 명령은 빌드뿐 아니라 checkout 후 배포까지 담당. 빈 슬라이스이면 실행을 건너뛴다
+//     (기본 명령 없음 — docker 의존을 가정하지 않는다).
 //
 // fake DockerClient 로 단위 테스트 주입 (NF-Test-Docker-1).
 //
@@ -149,37 +151,33 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return r.fail(ctx, pid, "repocache_checkout", err)
 	}
 
-	// (3) 빌드 설정 스냅샷 (결정 11: Handle 진입 시점 1회 받고 끝까지 사용).
+	// (3) run 설정 스냅샷 (결정 11: Handle 진입 시점 1회 받고 끝까지 사용).
 	snap := protocol.AgentConfigData{}
 	if r.holder != nil {
 		snap = r.holder.Snapshot()
 	}
+	// 빈 슬라이스면 실행 없이 다음 단계로 진행 (기본값 없음 — docker 가정 제거).
 	cmds := snap.RunCommands
-	if len(cmds) == 0 {
-		// 결정 2: 빈 슬라이스 = 기본값 적용.
-		cmds = []string{"docker build -t $PREVIEW_IMAGE ."}
-	}
 	resolvedPort := snap.ContainerPort
 	if resolvedPort == 0 {
-		// 결정 2: 0 = 기본값(80) 적용.
+		// 0 = 기본값(80) 적용.
 		resolvedPort = 80
 	}
 
-	// (4) 빌드 명령 셸 실행 (결정 3: sh -c 1 라인씩 직렬, cwd=worktree).
+	// (4) run 명령 셸 실행 (결정 3: sh -c 1 라인씩 직렬, cwd=worktree).
 	tag := "preview-" + pid + ":latest"
-	buildEnv := append(os.Environ(),
+	runEnv := append(os.Environ(),
 		"PREVIEW_ID="+pid,
-		"PREVIEW_IMAGE="+tag,
 		"PREVIEW_SHA="+msg.CommitSHA,
 		"PREVIEW_BRANCH="+msg.Branch,
 		"PORT="+strconv.Itoa(resolvedPort),
 	)
 	for i, line := range cmds {
-		r.logger.Info("agent_build_step",
+		r.logger.Info("agent_run_step",
 			"preview_id", pid, "step", i+1, "cmd", line)
 		c := exec.CommandContext(ctx, "sh", "-c", line)
 		c.Dir = worktree
-		c.Env = buildEnv
+		c.Env = runEnv
 		out, cerr := c.CombinedOutput()
 		if cerr != nil {
 			detail := strings.TrimSpace(string(out))
@@ -187,7 +185,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 				detail = detail[len(detail)-200:]
 			}
 			return r.fail(ctx, pid,
-				fmt.Sprintf("build_step_%d", i+1),
+				fmt.Sprintf("run_step_%d", i+1),
 				fmt.Errorf("%s: %w\n%s", line, cerr, detail))
 		}
 	}
