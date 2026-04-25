@@ -118,13 +118,13 @@ type LogData struct {
 
 // AgentConfigData 는 AGENT_CONFIG / CONFIG_UPDATE 의 본문 (Phase 4).
 //
-// BuildCommands 가 빈 슬라이스([]) 면 기본값(`docker build -t $PREVIEW_IMAGE .`).
-// ContainerPort == 0 이면 기본값(80).
+// RunCommands 가 빈 슬라이스([]) 면 실행을 건너뛴다 (기본 명령 없음).
+// ContainerPort == 0 이면 기본값(80) 적용.
 //
 // 두 sentinel 모두 wire 에 명시 송신된다 (omitempty 미적용) — Agent 측에서
 // "키 부재" 와 "기본값 적용" 의도를 구분할 필요 없이 단일 경로로 처리하기 위함.
 type AgentConfigData struct {
-	BuildCommands []string `json:"build_commands"`
+	RunCommands   []string `json:"run_commands"`
 	ContainerPort int      `json:"container_port"`
 }
 

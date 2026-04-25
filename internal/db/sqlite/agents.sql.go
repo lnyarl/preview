@@ -47,23 +47,23 @@ func (q *Queries) DeleteAgent(ctx context.Context, id string) error {
 }
 
 const getAgentBuildConfig = `-- name: GetAgentBuildConfig :one
-SELECT build_commands, container_port FROM agents WHERE id = ?
+SELECT run_commands, container_port FROM agents WHERE id = ?
 `
 
 type GetAgentBuildConfigRow struct {
-	BuildCommands sql.NullString `json:"build_commands"`
+	RunCommands   sql.NullString `json:"run_commands"`
 	ContainerPort sql.NullInt64  `json:"container_port"`
 }
 
 func (q *Queries) GetAgentBuildConfig(ctx context.Context, id string) (GetAgentBuildConfigRow, error) {
 	row := q.db.QueryRowContext(ctx, getAgentBuildConfig, id)
 	var i GetAgentBuildConfigRow
-	err := row.Scan(&i.BuildCommands, &i.ContainerPort)
+	err := row.Scan(&i.RunCommands, &i.ContainerPort)
 	return i, err
 }
 
 const getAgentByID = `-- name: GetAgentByID :one
-SELECT id, name, token_hash, labels, status, last_seen_at, created_at, build_commands, container_port FROM agents WHERE id = ?
+SELECT id, name, token_hash, labels, status, last_seen_at, created_at, run_commands, container_port FROM agents WHERE id = ?
 `
 
 func (q *Queries) GetAgentByID(ctx context.Context, id string) (Agent, error) {
@@ -77,14 +77,14 @@ func (q *Queries) GetAgentByID(ctx context.Context, id string) (Agent, error) {
 		&i.Status,
 		&i.LastSeenAt,
 		&i.CreatedAt,
-		&i.BuildCommands,
+		&i.RunCommands,
 		&i.ContainerPort,
 	)
 	return i, err
 }
 
 const getAgentByName = `-- name: GetAgentByName :one
-SELECT id, name, token_hash, labels, status, last_seen_at, created_at, build_commands, container_port FROM agents WHERE name = ?
+SELECT id, name, token_hash, labels, status, last_seen_at, created_at, run_commands, container_port FROM agents WHERE name = ?
 `
 
 func (q *Queries) GetAgentByName(ctx context.Context, name string) (Agent, error) {
@@ -98,14 +98,14 @@ func (q *Queries) GetAgentByName(ctx context.Context, name string) (Agent, error
 		&i.Status,
 		&i.LastSeenAt,
 		&i.CreatedAt,
-		&i.BuildCommands,
+		&i.RunCommands,
 		&i.ContainerPort,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, name, token_hash, labels, status, last_seen_at, created_at, build_commands, container_port FROM agents ORDER BY created_at DESC
+SELECT id, name, token_hash, labels, status, last_seen_at, created_at, run_commands, container_port FROM agents ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
@@ -125,7 +125,7 @@ func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
 			&i.Status,
 			&i.LastSeenAt,
 			&i.CreatedAt,
-			&i.BuildCommands,
+			&i.RunCommands,
 			&i.ContainerPort,
 		); err != nil {
 			return nil, err
@@ -143,7 +143,7 @@ func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
 
 const saveAgentBuildConfig = `-- name: SaveAgentBuildConfig :exec
 UPDATE agents
-SET build_commands = NULLIF(?1, ''),
+SET run_commands = NULLIF(?1, ''),
     container_port = NULLIF(?2, 0)
 WHERE id = ?3
 `

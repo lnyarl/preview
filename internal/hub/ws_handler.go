@@ -431,7 +431,7 @@ func (h *WSHandler) sendAgentConfig(ctx context.Context, conn *websocket.Conn, a
 		h.Logger.Warn("agent_config_fetch_failed", "agent_id", agentID, "err", err.Error())
 		return
 	}
-	cfg := protocol.AgentConfigData{BuildCommands: cmds, ContainerPort: port}
+	cfg := protocol.AgentConfigData{RunCommands: cmds, ContainerPort: port}
 	env, err := protocol.NewEnvelope(protocol.TypeAgentConfig, cfg)
 	if err != nil {
 		h.Logger.Warn("agent_config_encode_failed", "agent_id", agentID, "err", err.Error())

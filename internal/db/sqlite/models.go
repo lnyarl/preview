@@ -16,7 +16,7 @@ type Agent struct {
 	Status        string         `json:"status"`
 	LastSeenAt    sql.NullString `json:"last_seen_at"`
 	CreatedAt     string         `json:"created_at"`
-	BuildCommands sql.NullString `json:"build_commands"`
+	RunCommands   sql.NullString `json:"run_commands"`
 	ContainerPort sql.NullInt64  `json:"container_port"`
 }
 

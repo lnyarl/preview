@@ -28,7 +28,7 @@
   <form method="POST" action="/admin/agents/{{.AgentID}}/config">
     <label for="build_commands">Build commands (one per line)</label>
     <textarea id="build_commands" name="build_commands" rows="6"
-              placeholder="docker build -t $PREVIEW_IMAGE .">{{.BuildCommandsText}}</textarea>
+              placeholder="docker build -t $PREVIEW_IMAGE .">{{.RunCommandsText}}</textarea>
     <small>Each line runs as <code>sh -c &lt;line&gt;</code> with <code>cwd=worktree</code>. Non-zero exit aborts the build. Leave empty to use the default.</small>
 
     <label for="container_port">Container port</label>

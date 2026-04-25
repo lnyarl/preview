@@ -605,18 +605,18 @@ func (h *AdminUIHandler) previewRebuild(w http.ResponseWriter, r *http.Request) 
 
 // agentDetailView 는 GET /admin/agents/{id} 의 렌더 모델.
 type agentDetailView struct {
-	Title             string
-	AgentID           string
-	Name              string
-	Status            string
-	LabelsString      string
-	LastSeenString    string
-	CreatedString     string
-	BuildCommandsText string // raw textarea 내용. NULL/empty 일 때 빈 문자열.
-	ContainerPort     int    // 0 이면 빈 input(=기본값).
-	SavedFlash        bool
-	PushOutcome       string // "delivered" | "agent offline" | "delivery failed"
-	Error             string
+	Title           string
+	AgentID         string
+	Name            string
+	Status          string
+	LabelsString    string
+	LastSeenString  string
+	CreatedString   string
+	RunCommandsText string // raw textarea 내용. NULL/empty 일 때 빈 문자열.
+	ContainerPort   int    // 0 이면 빈 input(=기본값).
+	SavedFlash      bool
+	PushOutcome     string // "delivered" | "agent offline" | "delivery failed"
+	Error           string
 }
 
 // agentDetail 은 GET /admin/agents/{id} 핸들러.
@@ -643,14 +643,14 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 		port = 0
 	}
 	view := agentDetailView{
-		Title:             "Agent " + a.Name,
-		AgentID:           a.ID,
-		Name:              a.Name,
-		Status:            a.Status,
-		LabelsString:      labelsToString(a.Labels),
-		CreatedString:     a.CreatedAt.UTC().Format(time.RFC3339),
-		BuildCommandsText: strings.Join(cmds, "\n"),
-		ContainerPort:     port,
+		Title:           "Agent " + a.Name,
+		AgentID:         a.ID,
+		Name:            a.Name,
+		Status:          a.Status,
+		LabelsString:    labelsToString(a.Labels),
+		CreatedString:   a.CreatedAt.UTC().Format(time.RFC3339),
+		RunCommandsText: strings.Join(cmds, "\n"),
+		ContainerPort:   port,
 	}
 	if a.LastSeenAt != nil {
 		view.LastSeenString = a.LastSeenAt.UTC().Format(time.RFC3339)
@@ -710,7 +710,7 @@ func (h *AdminUIHandler) agentConfigSave(w http.ResponseWriter, r *http.Request)
 
 	// 와이어 페이로드 구성: split + trim + drop empty.
 	cmdLines := splitAndCleanLines(rawCommands)
-	cfg := protocol.AgentConfigData{BuildCommands: cmdLines, ContainerPort: port}
+	cfg := protocol.AgentConfigData{RunCommands: cmdLines, ContainerPort: port}
 
 	msg := "saved"
 	if h.jobSender == nil {

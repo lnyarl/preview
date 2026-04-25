@@ -149,8 +149,8 @@ func (s *AgentStore) GetBuildConfig(ctx context.Context, agentID string) ([]stri
 		return nil, 0, fmt.Errorf("sqlite.GetBuildConfig: %w", err)
 	}
 	cmds := []string{}
-	if row.BuildCommands.Valid {
-		cmds = splitBuildCommands(row.BuildCommands.String)
+	if row.RunCommands.Valid {
+		cmds = splitBuildCommands(row.RunCommands.String)
 	}
 	port := 0
 	if row.ContainerPort.Valid {

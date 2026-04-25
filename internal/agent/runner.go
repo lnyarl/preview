@@ -154,7 +154,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	if r.holder != nil {
 		snap = r.holder.Snapshot()
 	}
-	cmds := snap.BuildCommands
+	cmds := snap.RunCommands
 	if len(cmds) == 0 {
 		// 결정 2: 빈 슬라이스 = 기본값 적용.
 		cmds = []string{"docker build -t $PREVIEW_IMAGE ."}

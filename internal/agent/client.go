@@ -252,7 +252,7 @@ func (c *Client) dispatchMessage(ctx context.Context, env protocol.Envelope) {
 		}
 		c.holder.Replace(data)
 		c.logger.Info("agent_config_applied",
-			"type", env.Type, "commands", len(data.BuildCommands), "port", data.ContainerPort)
+			"type", env.Type, "commands", len(data.RunCommands), "port", data.ContainerPort)
 	default:
 		c.logger.Debug("ws_message_received", "type", env.Type)
 	}
