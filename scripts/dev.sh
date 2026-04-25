@@ -19,6 +19,32 @@
 #   AGENT_ADVERTISE_HOST  — Hub가 컨테이너 접속 시 쓸 IP (기본: 127.0.0.1)
 set -euo pipefail
 
+# ── Go 바이너리 탐색 ────────────────────────────────────────────────────────
+# bash scripts/dev.sh 으로 실행 시 PATH 가 인터랙티브 셸과 달라 go 를 못 찾을 수 있음.
+if ! command -v go >/dev/null 2>&1; then
+  for _candidate in \
+    "$HOME/go/bin/go" \
+    "$HOME/.local/go/bin/go" \
+    "/usr/local/go/bin/go" \
+    "/c/Program Files/Go/bin/go" \
+    "/c/Go/bin/go"; do
+    if [ -x "$_candidate" ]; then
+      export PATH="$(dirname "$_candidate"):$PATH"
+      break
+    fi
+  done
+fi
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "ERROR: 'go' 명령어를 찾을 수 없습니다."
+  echo "  Go 설치: https://go.dev/dl/"
+  echo "  또는 터미널에서 직접 실행: AGENT_REPO_URL=... go run ./scripts/dev.go (미지원)"
+  echo "  임시 해결책: PATH=\$(go env GOROOT)/bin:\$PATH bash scripts/dev.sh"
+  exit 1
+fi
+
+echo "==> Using Go: $(command -v go) ($(go version | awk '{print $3}'))"
+
 # ── .env 로드 ──────────────────────────────────────────────────────────────
 if [ -f .env ]; then
   set -a
