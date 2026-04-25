@@ -4,9 +4,11 @@
 //   - Hub 의 PING 수신 시 내부 PONG 은 coder/websocket 라이브러리가 처리하므로,
 //     앱 레벨에서는 read loop 가 다른 메시지들을 기다린다.
 //   - 연결 유실 시 지수 백오프로 재시도.
-//   - Phase 2: WELCOME 후 READY 1회 송신 + JOB_ASSIGN/JOB_TEARDOWN dispatch.
+//   - Phase 2: WELCOME 후 READY 송신 + JOB_ASSIGN/JOB_TEARDOWN dispatch.
+//   - Phase 5: 초기 READY 는 runner.maybeSendReady 로 가용 슬롯 수만큼 송신.
+//     SendReady 메서드를 노출해 Runner 의 ReadySender 인터페이스를 만족.
 //
-// 참고: 기획서 §4-3-1, 결정 4/5/10.
+// 참고: 기획서 §4-3-1, 결정 4/5/10, phase-5 §3 결정 5/7/8.
 package agent
 
 import (
@@ -57,6 +59,26 @@ func (c *Client) SendStatusUpdate(ctx context.Context, d protocol.StatusUpdateDa
 		return errors.New("client.SendStatusUpdate: not connected")
 	}
 	env, err := protocol.NewEnvelope(protocol.TypeStatusUpdate, d)
+	if err != nil {
+		return err
+	}
+	b, _ := json.Marshal(env)
+	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return conn.Write(wctx, websocket.MessageText, b)
+}
+
+// SendReady 는 현재 conn 으로 READY envelope 1 개를 송신한다 (Phase 5).
+// Runner.ReadySender 인터페이스 만족. Capacity 페이로드는 결정 9 에 따라 1 고정 —
+// MaxJobs 갯수는 메시지 호출 횟수로 표현된다.
+func (c *Client) SendReady(ctx context.Context) error {
+	c.connMu.Lock()
+	conn := c.conn
+	c.connMu.Unlock()
+	if conn == nil {
+		return errors.New("client.SendReady: not connected")
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeReady, protocol.ReadyData{Capacity: 1})
 	if err != nil {
 		return err
 	}
@@ -166,15 +188,13 @@ func (c *Client) once(ctx context.Context) error {
 		_ = conn.Close(websocket.StatusNormalClosure, "graceful shutdown")
 	}()
 
-	// READY 1회 송신 (결정 10: capacity=1 MVP).
-	readyEnv, _ := protocol.NewEnvelope(protocol.TypeReady, protocol.ReadyData{Capacity: 1})
-	rb, _ := json.Marshal(readyEnv)
-	rctx, rcancel := context.WithTimeout(ctx, 5*time.Second)
-	if werr := conn.Write(rctx, websocket.MessageText, rb); werr != nil {
-		rcancel()
-		c.logger.Warn("ws_ready_write_failed", "err", werr.Error())
-	} else {
-		rcancel()
+	// Phase 5: 가용 슬롯 수만큼 READY 송신. reconnect 시 inFlight>0 이면
+	// maybeSendReady 가 정확한 갯수만큼만 송신해 over-subscribe 를 막는다.
+	// runner 미주입(Phase 1 호환) 시는 1 회 단발 송신으로 fallback.
+	if c.runner != nil {
+		c.runner.maybeSendReady(ctx)
+	} else if err := c.SendReady(ctx); err != nil {
+		c.logger.Warn("ws_ready_write_failed", "err", err.Error())
 	}
 
 	// Read loop — Hub 의 PING 은 라이브러리가 처리.
