@@ -672,7 +672,7 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 
 // agentConfigSave 는 POST /admin/agents/{id}/config 핸들러 (Phase 4 §4-6).
 //
-//  1. 폼 파싱: build_commands raw text + container_port int.
+//  1. 폼 파싱: run_commands raw text + container_port int.
 //  2. Normalize: port 1..65535 외 / 비숫자 / 빈 값 → 0 (sentinel).
 //  3. SaveBuildConfig 호출 (rawCommands "" → NULL, port 0 → NULL).
 //  4. jobSender 가 있고 agent 가 connected 이면 CONFIG_UPDATE 푸시.
@@ -697,7 +697,7 @@ func (h *AdminUIHandler) agentConfigSave(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	rawCommands := r.FormValue("build_commands")
+	rawCommands := r.FormValue("run_commands")
 	port := normalizeContainerPort(r.FormValue("container_port"))
 
 	if err := h.AgentStore.SaveBuildConfig(r.Context(), id, rawCommands, port); err != nil {
