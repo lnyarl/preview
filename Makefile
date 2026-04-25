@@ -1,6 +1,11 @@
 # Preview -- development task runner.
 
-.PHONY: run-hub run-agent build fmt vet lint sqlc migrate-up migrate-down migrate-version test
+.PHONY: run-hub run-agent dev build fmt vet lint sqlc migrate-up migrate-down migrate-version test
+
+## Start Hub + Agent together for local development (requires AGENT_REPO_URL).
+## Usage: make dev AGENT_REPO_URL=https://github.com/owner/repo.git
+dev:
+	bash scripts/dev.sh
 
 ## Run the Hub daemon (default port :3000).
 run-hub:
