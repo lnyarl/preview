@@ -6,6 +6,7 @@ issues:
   exclude-files:
     # sqlc-generated code: style is out of our hands.
     - "internal/db/sqlite/agents.sql.go"
+    - "internal/db/sqlite/previews.sql.go"
     - "internal/db/sqlite/db.go"
     - "internal/db/sqlite/models.go"
     - "internal/db/sqlite/querier.go"
