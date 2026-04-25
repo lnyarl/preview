@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -25,6 +26,11 @@ func main() {
 	case "start":
 		if err := runStart(args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
+			// 필수 플래그 부재(검증 단계 실패)는 usage 오류로 exit 2,
+			// 그 외 런타임 오류는 exit 1 (NF-Validation, F-S2-5).
+			if errors.Is(err, agent.ErrMissingRequiredFlag) {
+				os.Exit(2)
+			}
 			os.Exit(1)
 		}
 	default:
@@ -42,8 +48,35 @@ func runStart(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger.Info("agent_start", "hub_url", cfg.HubURL)
+	logger.Info("agent_start",
+		"hub_url", cfg.HubURL,
+		"repo_url", cfg.RepoURL,
+		"work_dir", cfg.WorkDir,
+		"prefetch_interval", cfg.PrefetchInterval.String(),
+		"max_jobs", cfg.MaxJobs,
+	)
+
+	// Phase 2: RepoCache + Docker SDK + Runner + Client wiring.
+	cache := agent.NewRepoCache(cfg.WorkDir, cfg.RepoURL, logger)
+	if err := cache.Ensure(ctx); err != nil {
+		return fmt.Errorf("repocache ensure: %w", err)
+	}
+	if cfg.PrefetchInterval > 0 {
+		go cache.StartPrefetch(ctx, cfg.PrefetchInterval)
+	}
+
+	docker, err := newSDKDockerClient()
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	if err := docker.Ping(ctx); err != nil {
+		logger.Warn("docker_ping_failed", "err", err.Error())
+	}
+
 	c := agent.NewClient(cfg, logger)
+	runner := agent.NewRunner(docker, cache, c, cfg.AdvertiseHost, logger)
+	c.SetRunner(runner)
+
 	err = c.Run(ctx)
 	logger.Info("graceful shutdown")
 	return err

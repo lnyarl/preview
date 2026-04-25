@@ -4,8 +4,9 @@
 //   - Hub 의 PING 수신 시 내부 PONG 은 coder/websocket 라이브러리가 처리하므로,
 //     앱 레벨에서는 read loop 가 다른 메시지들을 기다린다.
 //   - 연결 유실 시 지수 백오프로 재시도.
+//   - Phase 2: WELCOME 후 READY 1회 송신 + JOB_ASSIGN/JOB_TEARDOWN dispatch.
 //
-// 참고: 기획서 §4-3-1, 결정 4/5.
+// 참고: 기획서 §4-3-1, 결정 4/5/10.
 package agent
 
 import (
@@ -14,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -25,11 +27,39 @@ type Client struct {
 	cfg     Config
 	logger  *slog.Logger
 	backoff *Backoff
+
+	runner *Runner
+
+	connMu sync.Mutex
+	conn   *websocket.Conn
 }
 
 // NewClient 는 주어진 설정으로 Client 를 만든다.
+// runner 는 nil 이어도 동작 (Phase 1 호환). nil 이면 JOB_ASSIGN 은 로그만.
 func NewClient(cfg Config, logger *slog.Logger) *Client {
 	return &Client{cfg: cfg, logger: logger, backoff: NewBackoff(0)}
+}
+
+// SetRunner 는 JOB_ASSIGN/TEARDOWN 처리 runner 를 주입한다.
+func (c *Client) SetRunner(r *Runner) { c.runner = r }
+
+// SendStatusUpdate 는 현재 conn 으로 STATUS_UPDATE envelope 를 송신한다.
+// Runner.HubSender 인터페이스 만족.
+func (c *Client) SendStatusUpdate(ctx context.Context, d protocol.StatusUpdateData) error {
+	c.connMu.Lock()
+	conn := c.conn
+	c.connMu.Unlock()
+	if conn == nil {
+		return errors.New("client.SendStatusUpdate: not connected")
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeStatusUpdate, d)
+	if err != nil {
+		return err
+	}
+	b, _ := json.Marshal(env)
+	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return conn.Write(wctx, websocket.MessageText, b)
 }
 
 // Run 은 ctx 가 취소될 때까지 연결·재연결 루프를 돈다.
@@ -112,11 +142,32 @@ func (c *Client) once(ctx context.Context) error {
 	}
 	c.logger.Info("ws_connected", "hub_url", c.cfg.HubURL)
 
+	// 연결 등록 — SendStatusUpdate 가 사용.
+	c.connMu.Lock()
+	c.conn = conn
+	c.connMu.Unlock()
+	defer func() {
+		c.connMu.Lock()
+		c.conn = nil
+		c.connMu.Unlock()
+	}()
+
 	// ctx 취소 시 close frame 송신을 보장.
 	go func() {
 		<-ctx.Done()
 		_ = conn.Close(websocket.StatusNormalClosure, "graceful shutdown")
 	}()
+
+	// READY 1회 송신 (결정 10: capacity=1 MVP).
+	readyEnv, _ := protocol.NewEnvelope(protocol.TypeReady, protocol.ReadyData{Capacity: 1})
+	rb, _ := json.Marshal(readyEnv)
+	rctx, rcancel := context.WithTimeout(ctx, 5*time.Second)
+	if werr := conn.Write(rctx, websocket.MessageText, rb); werr != nil {
+		rcancel()
+		c.logger.Warn("ws_ready_write_failed", "err", werr.Error())
+	} else {
+		rcancel()
+	}
 
 	// Read loop — Hub 의 PING 은 라이브러리가 처리.
 	// 수신 에러가 나면 루프를 빠져 나온다. Hub 의 close frame(1001 등) 도 여기서 감지된다.
@@ -137,6 +188,48 @@ func (c *Client) once(ctx context.Context) error {
 			c.logger.Warn("ws_decode_failed", "err", err.Error())
 			continue
 		}
+		c.dispatchMessage(ctx, env)
+	}
+}
+
+// dispatchMessage 는 수신 envelope 를 type 별로 dispatch.
+func (c *Client) dispatchMessage(ctx context.Context, env protocol.Envelope) {
+	switch env.Type {
+	case protocol.TypeJobAssign:
+		var data protocol.JobAssignData
+		if err := env.Decode(&data); err != nil {
+			c.logger.Warn("job_assign_decode_failed", "err", err.Error())
+			return
+		}
+		if c.runner == nil {
+			c.logger.Warn("job_assign_received_without_runner", "preview_id", data.PreviewID)
+			return
+		}
+		go func() {
+			bg, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+			if err := c.runner.Handle(bg, data); err != nil {
+				c.logger.Warn("runner_handle_failed", "preview_id", data.PreviewID, "err", err.Error())
+			}
+		}()
+	case protocol.TypeJobTeardown:
+		var data protocol.JobTeardownData
+		if err := env.Decode(&data); err != nil {
+			c.logger.Warn("job_teardown_decode_failed", "err", err.Error())
+			return
+		}
+		if c.runner == nil {
+			c.logger.Warn("job_teardown_received_without_runner", "preview_id", data.PreviewID)
+			return
+		}
+		go func() {
+			bg, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if err := c.runner.Teardown(bg, data.PreviewID); err != nil {
+				c.logger.Warn("runner_teardown_failed", "preview_id", data.PreviewID, "err", err.Error())
+			}
+		}()
+	default:
 		c.logger.Debug("ws_message_received", "type", env.Type)
 	}
 }
