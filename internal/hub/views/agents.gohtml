@@ -1,0 +1,54 @@
+{{define "content"}}
+<hgroup>
+  <h1>Agents</h1>
+  <h2>Registered agents and their status</h2>
+</hgroup>
+
+{{if .Error}}
+  <article role="alert">Error: {{.Error}}</article>
+{{end}}
+
+{{if eq (len .Agents) 0}}
+  <p><em>No agents yet — use the form below to add one.</em></p>
+{{else}}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Name</th>
+        <th scope="col">Status</th>
+        <th scope="col">Labels</th>
+        <th scope="col">Run #</th>
+        <th scope="col">Last Seen</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Agents}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{.Status}}</td>
+        <td>{{.LabelsString}}</td>
+        <td>{{.RunningCount}}</td>
+        <td>{{.LastSeenString}}</td>
+        <td>
+          <form method="POST" action="/admin/agents/{{.ID}}/delete">
+            <button type="submit" class="secondary outline">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{end}}
+
+<section>
+  <h3>Add Agent</h3>
+  <form method="POST" action="/admin/agents">
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" placeholder="agent-home" required>
+    <label for="labels">Labels (k=v,k2=v2)</label>
+    <input type="text" id="labels" name="labels" placeholder="env=home">
+    <button type="submit">Submit</button>
+  </form>
+</section>
+{{end}}

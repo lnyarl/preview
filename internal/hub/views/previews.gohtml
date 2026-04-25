@@ -1,0 +1,58 @@
+{{define "content"}}
+<hgroup>
+  <h1>Previews</h1>
+  <h2>Preview environments and their lifecycle status</h2>
+</hgroup>
+
+<form method="GET" action="/admin/previews">
+  <div class="grid">
+    <label for="repo">Repo
+      <input type="text" id="repo" name="repo" value="{{.Filter.Repo}}" placeholder="acme/web">
+    </label>
+    <label for="status">Status
+      <select id="status" name="status">
+        <option value=""{{if eq .Filter.Status ""}} selected{{end}}>all</option>
+        <option value="queued"{{if eq .Filter.Status "queued"}} selected{{end}}>queued</option>
+        <option value="assigned"{{if eq .Filter.Status "assigned"}} selected{{end}}>assigned</option>
+        <option value="building"{{if eq .Filter.Status "building"}} selected{{end}}>building</option>
+        <option value="running"{{if eq .Filter.Status "running"}} selected{{end}}>running</option>
+        <option value="teardown"{{if eq .Filter.Status "teardown"}} selected{{end}}>teardown</option>
+        <option value="done"{{if eq .Filter.Status "done"}} selected{{end}}>done</option>
+        <option value="failed"{{if eq .Filter.Status "failed"}} selected{{end}}>failed</option>
+      </select>
+    </label>
+    <label>&nbsp;
+      <button type="submit">Apply</button>
+    </label>
+  </div>
+</form>
+
+{{if eq (len .Previews) 0}}
+  <p><em>No previews match the current filter.</em></p>
+{{else}}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">PR</th>
+        <th scope="col">Repo</th>
+        <th scope="col">Status</th>
+        <th scope="col">Branch</th>
+        <th scope="col">Agent</th>
+        <th scope="col">Updated</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Previews}}
+      <tr>
+        <td><a href="/admin/previews/{{.ID}}">#{{.PrNumber}}</a></td>
+        <td>{{.RepoFullName}}</td>
+        <td>{{.Status}}</td>
+        <td>{{.Branch}}</td>
+        <td>{{.AgentLabel}}</td>
+        <td>{{.UpdatedString}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{end}}
+{{end}}

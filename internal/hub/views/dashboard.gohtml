@@ -1,0 +1,55 @@
+{{define "content"}}
+<hgroup>
+  <h1>Dashboard</h1>
+  <h2>Hub overview at a glance</h2>
+</hgroup>
+
+<section>
+  <div class="grid">
+    <article>
+      <header>Total Agents</header>
+      <strong>{{.TotalAgents}}</strong>
+    </article>
+    <article>
+      <header>Online Agents</header>
+      <strong>{{.OnlineAgents}}</strong>
+    </article>
+    <article>
+      <header>Running Previews</header>
+      <strong>{{.RunningPreviews}}</strong>
+    </article>
+    <article>
+      <header>Queued Previews</header>
+      <strong>{{.QueuedPreviews}}</strong>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h3>Status breakdown</h3>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">queued</th>
+        <th scope="col">assigned</th>
+        <th scope="col">building</th>
+        <th scope="col">running</th>
+        <th scope="col">teardown</th>
+        <th scope="col">done</th>
+        <th scope="col">failed</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{.StatusCounts.queued}}</td>
+        <td>{{.StatusCounts.assigned}}</td>
+        <td>{{.StatusCounts.building}}</td>
+        <td>{{.StatusCounts.running}}</td>
+        <td>{{.StatusCounts.teardown}}</td>
+        <td>{{.StatusCounts.done}}</td>
+        <td>{{.StatusCounts.failed}}</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+{{end}}

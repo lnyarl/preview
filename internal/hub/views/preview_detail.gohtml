@@ -1,0 +1,53 @@
+{{define "content"}}
+<hgroup>
+  <h1>PR #{{.Preview.PrNumber}} — {{.Preview.RepoFullName}}</h1>
+  <h2>Preview detail and timeline</h2>
+</hgroup>
+
+{{if .ConflictMessage}}
+  <article role="alert">{{.ConflictMessage}}</article>
+{{end}}
+
+<section>
+  <dl>
+    <dt>Status</dt><dd>{{.Preview.Status}}</dd>
+    <dt>Commit</dt><dd>{{.Preview.CommitSha}}</dd>
+    <dt>Branch</dt><dd>{{.Preview.Branch}}</dd>
+    <dt>Agent</dt><dd>{{.AgentLine}}</dd>
+    <dt>URL</dt><dd>{{if .PublicURL}}<a href="{{.PublicURL}}">{{.PublicURL}}</a>{{else}}<em>not running</em>{{end}}</dd>
+  </dl>
+</section>
+
+<section>
+  <form method="POST" action="/admin/previews/{{.Preview.ID}}/rebuild">
+    <button type="submit"{{if not .RebuildEnabled}} disabled{{end}}>Rebuild</button>
+  </form>
+  <small>Rebuild is enabled only when status is <code>done</code> or <code>failed</code>.</small>
+</section>
+
+<section>
+  <h3>Timeline</h3>
+  {{if eq (len .Events) 0}}
+    <p><em>No events recorded yet.</em></p>
+  {{else}}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Time</th>
+          <th scope="col">Transition</th>
+          <th scope="col">Message</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Events}}
+        <tr>
+          <td>{{.TimeString}}</td>
+          <td>{{.FromString}} &rarr; {{.ToStatus}}</td>
+          <td>{{.Message}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  {{end}}
+</section>
+{{end}}

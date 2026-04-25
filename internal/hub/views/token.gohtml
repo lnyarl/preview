@@ -1,0 +1,21 @@
+{{define "content"}}
+<hgroup>
+  <h1>Agent created: {{.Name}}</h1>
+  <h2>One-time token display</h2>
+</hgroup>
+
+<article role="alert">
+  <strong>Save this token now — it will not be shown again.</strong>
+  <p>This page is the only chance to copy the agent token. If you lose it,
+  delete the agent and create a new one.</p>
+</article>
+
+<section>
+  <label for="token">Token</label>
+  <input id="token" type="text" readonly value="{{.Token}}">
+</section>
+
+<p>
+  <a href="/admin/agents" role="button">Back to Agents</a>
+</p>
+{{end}}
