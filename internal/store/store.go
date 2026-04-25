@@ -33,6 +33,16 @@ type AgentStore interface {
 	List(ctx context.Context) ([]Agent, error)
 	UpdateStatus(ctx context.Context, id string, status string, lastSeenAt time.Time) error
 	Delete(ctx context.Context, id string) error
+
+	// GetBuildConfig 는 Agent 의 빌드 설정을 반환한다 (Phase 4).
+	// commands 가 비어 있으면(빈 슬라이스) 기본값(`docker build -t $PREVIEW_IMAGE .`) 적용 의도.
+	// port 가 0 이면 기본값(80) 적용 의도. 두 sentinel 모두 DB 의 NULL 과 동치.
+	GetBuildConfig(ctx context.Context, agentID string) (commands []string, port int, err error)
+
+	// SaveBuildConfig 는 raw textarea 텍스트와 port 를 저장한다 (Phase 4).
+	// rawCommands == "" → build_commands = NULL.
+	// port == 0 → container_port = NULL (정수 0 으로 절대 저장되지 않음).
+	SaveBuildConfig(ctx context.Context, agentID string, rawCommands string, port int) error
 }
 
 // Preview 는 previews 테이블에 대응하는 도메인 엔티티.

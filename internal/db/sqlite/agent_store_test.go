@@ -151,6 +151,82 @@ func TestResetAllOnline(t *testing.T) {
 	}
 }
 
+// TestAgentBuildConfig — Phase 4 F-4 / F-5 / F-6 / F-7.
+func TestAgentBuildConfig(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// 신규 Agent 등록 (build_commands NULL, container_port NULL).
+	a := store.Agent{
+		ID:        "agent-bc-1",
+		Name:      "agent-bc",
+		TokenHash: "$2a$04$h",
+		Status:    "offline",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.Create(ctx, a); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// F-6: NULL → ([], 0).
+	cmds, port, err := s.GetBuildConfig(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetBuildConfig fresh: %v", err)
+	}
+	if len(cmds) != 0 {
+		t.Fatalf("fresh cmds=%v want []", cmds)
+	}
+	if port != 0 {
+		t.Fatalf("fresh port=%d want 0", port)
+	}
+
+	// F-4: 저장 → 검색 round-trip.
+	rawSave := "npm ci\nnpm run build\ndocker build -t $PREVIEW_IMAGE ."
+	if err := s.SaveBuildConfig(ctx, a.ID, rawSave, 3000); err != nil {
+		t.Fatalf("SaveBuildConfig: %v", err)
+	}
+	cmds, port, err = s.GetBuildConfig(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetBuildConfig saved: %v", err)
+	}
+	if len(cmds) != 3 {
+		t.Fatalf("cmds len=%d want 3, got %v", len(cmds), cmds)
+	}
+	if cmds[0] != "npm ci" || cmds[1] != "npm run build" {
+		t.Fatalf("cmds=%v", cmds)
+	}
+	if port != 3000 {
+		t.Fatalf("port=%d want 3000", port)
+	}
+
+	// F-7: multi-line 정규화 — 빈 줄 제거.
+	if err := s.SaveBuildConfig(ctx, a.ID, "a\n\nb\n", 0); err != nil {
+		t.Fatalf("SaveBuildConfig multi: %v", err)
+	}
+	cmds, port, err = s.GetBuildConfig(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetBuildConfig multi: %v", err)
+	}
+	if len(cmds) != 2 || cmds[0] != "a" || cmds[1] != "b" {
+		t.Fatalf("normalized cmds=%v want [a b]", cmds)
+	}
+	if port != 0 {
+		t.Fatalf("port=%d want 0 (NULL)", port)
+	}
+
+	// F-5: 빈 문자열 + 0 → NULL/NULL → ([], 0).
+	if err := s.SaveBuildConfig(ctx, a.ID, "", 0); err != nil {
+		t.Fatalf("SaveBuildConfig reset: %v", err)
+	}
+	cmds, port, err = s.GetBuildConfig(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetBuildConfig after reset: %v", err)
+	}
+	if len(cmds) != 0 || port != 0 {
+		t.Fatalf("after reset cmds=%v port=%d want [] 0", cmds, port)
+	}
+}
+
 func TestOpenURLPostgresUnsupported(t *testing.T) {
 	_, err := OpenURL(context.Background(), "postgres://user:pass@host/db")
 	if err == nil {
