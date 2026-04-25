@@ -57,6 +57,7 @@ Phase 1이 "Agent를 토큰으로 인증해 online으로 만드는 제어 평면
 - `gh-ost`-style zero-downtime 마이그레이션, multi-Hub HA, Postgres 실연결 → 후속.
 - Token rotation, audit log → 후속.
 - **Reverse proxy WebSocket upgrade 라우팅·HTTP/2·gRPC 트레일러·대용량 요청 본문(>10MB) 스트리밍 보증**: 본 Phase는 HTTP/1.1 단방향 요청-응답만 검증 범위. `httputil.ReverseProxy`가 자동 지원하는 Upgrade 헤더는 **미검증**으로 둠(Phase 3).
+- **Agent 재시작 시 컨테이너/worktree 복원·고아 정리 (F-S2-15 capacity 회수, F-S2-16 컨테이너 복원, F-S2-17 worktree 정리)**: §4-7-1 결정대로 Phase 3 `LIST_RUNNING_PREVIEWS` RPC 도입 후 처리. 본 Phase는 1슬롯 MVP 만 검증.
 
 ## 3. 설계 결정 및 근거
 
@@ -1120,9 +1121,9 @@ Hub 기동: `PREVIEW_REPO_FULL_NAME=local/preview-fixture` (S1 webhook BODY의 `
 - [ ] **F-S2-12**: Runner가 fake DockerClient 주입으로 단위 테스트 통과 — **검증 방법**: `go test ./internal/agent -run TestRunnerHappyPath` (fakeDockerClient 주입, ImageBuild/ContainerCreate/ContainerStart 호출 순서 검증, STATUS_UPDATE 메시지 building → running 송신 검증).
 - [ ] **F-S2-13**: Dockerfile 부재 시 status=failed + error_message — **검증 방법**: `TestRunnerNoDockerfile` (worktree에 Dockerfile 없는 fixture, fakeDockerClient 호출 0회, STATUS_UPDATE failed 송신 검증).
 - [ ] **F-S2-14**: 동적 포트 할당 + 1회 재시도 로직 — **검증 방법**: `TestAllocatePortConflictRetry` (첫 호출에서 fakeListener가 EADDRINUSE 반환, 두 번째에서 성공. 단위 테스트.)
-- [ ] **F-S2-15**: Agent의 동시 슬롯 관리 — **검증 방법**: `TestJobMapSlots` (max-jobs=2, 2건 점유 시 SlotsFree==0, 1건 완료 시 SlotsFree==1).
-- [ ] **F-S2-16**: Agent 재시작 시 컨테이너 복원 — **검증 방법**: `TestAgentOrphanRestoreContainers` (단위, fakeDockerClient의 ContainerList가 라벨 `hub-preview-id=p1` 컨테이너 1건 반환, 재시작 시 jobs 맵에 `p1` 복원, STATUS_UPDATE(running) 송신).
-- [ ] **F-S2-17**: Agent 재시작 시 고아 worktree 정리 — **검증 방법**: `TestAgentOrphanWorktreeCleanup` (단위, work-dir에 `preview-orphan` worktree 디렉토리 사전 생성 + jobs 맵 비어있음 → 정리 후 디렉토리 부재).
+- [ ] **F-S2-15** [Phase 3 이월: capacity 회수 정교화]: Agent의 동시 슬롯 관리 — **본 Step 검증**: 1슬롯 MVP 만 확인 (READY 1회 송신 → JOB_ASSIGN 1회 수신 → STATUS_UPDATE building/running). `JobMap.SlotsFree()` API 와 `max-jobs>1` 회수 정교화는 결정 10대로 Phase 3 이월. **Phase 3 검증**: `TestJobMapSlots` (max-jobs=2, 2건 점유 시 SlotsFree==0, 1건 완료 시 SlotsFree==1).
+- [ ] **F-S2-16** [Phase 3 이월: LIST_RUNNING_PREVIEWS RPC 도입 후 검증]: Agent 재시작 시 컨테이너 복원 — **본 Step 검증**: §4-7-1 결정대로 본 Phase 비범위. 1슬롯 환경에서 Agent 정상 종료 후 재시작 시 컨테이너 leak 1건 수용 — Phase 3 정책으로 정리. **Phase 3 검증**: `TestAgentOrphanRestoreContainers` (단위, fakeDockerClient의 ContainerList가 라벨 `hub-preview-id=p1` 컨테이너 1건 반환, 재시작 시 jobs 맵에 `p1` 복원, STATUS_UPDATE(running) 송신).
+- [ ] **F-S2-17** [Phase 3 이월: §4-7-1 ADR 후속 작업]: Agent 재시작 시 고아 worktree 정리 — **본 Step 검증**: §4-7-1 결정대로 본 Phase 비범위. **Phase 3 검증**: `TestAgentOrphanWorktreeCleanup` (단위, work-dir에 `preview-orphan` worktree 디렉토리 사전 생성 + jobs 맵 비어있음 → 정리 후 디렉토리 부재).
 
 ### Step 3 — Reverse Proxy + Teardown + Reconciliation (S3)
 
@@ -1336,7 +1337,7 @@ Hub 기동: `PREVIEW_REPO_FULL_NAME=local/preview-fixture` (S1 webhook BODY의 `
 3. `cmd/hub/main.go`의 reverse proxy 미들웨어가 fallthrough 패턴이므로 Phase 3 UI 라우트 추가 시 우선순위 충돌 없음 — Phase 3는 `/admin/ui/*` 정적 자산만 추가하면 됨.
 4. `internal/agent.RepoCache`를 `--repo-url` 반복 지원으로 확장 시 `<repo-slug>` 인덱싱 키만 변경 — 본 구현이 `map[repoSlug]*RepoCache`로 확장 가능한 형태(§5-13 레이아웃 그대로).
 5. ClaimPreview의 race 패턴 ADR(`docs/adr/0002-claim-preview-race.md`) 작성 (Phase 3 Postgres 분기 설계의 기준).
-6. Agent의 `LIST_RUNNING_PREVIEWS` RPC 또는 STATUS_QUERY 메시지 도입 (orphan worktree 정리의 정확도 향상).
+6. Agent의 `LIST_RUNNING_PREVIEWS` RPC 또는 STATUS_QUERY 메시지 도입 — F-S2-15(capacity 회수), F-S2-16(재시작 컨테이너 복원), F-S2-17(고아 worktree 정리) 인계. orphan worktree·container 정리의 정확도 향상 + Agent 재시작 시 jobs 맵 복원.
 7. `previews seed-stale` 서브커맨드는 test-only 마커 주석 + 운영 환경에서는 비활성화 또는 admin 토큰 게이트 (Phase 3).
 
 ---
@@ -1345,3 +1346,4 @@ Hub 기동: `PREVIEW_REPO_FULL_NAME=local/preview-fixture` (S1 webhook BODY의 `
 
 - 2026-04-24 — planner: DRAFT 최초 작성. plan-reviewer 리뷰 대기.
 - 2026-04-25 plan-reviewer: 1차 REQUEST_CHANGES (22건) → 반영 완료
+- 2026-04-25 evaluator(Step 2): F-S2-15/16/17이 §4-7-1과 모순으로 UNVERIFIED → planner amendment(§6에 [Phase 3 이월] 표기 + §2 비범위 bullet 추가 + §9 TODO 항목 보강). 핵심 결정/스코프 변경 없음, 표기만 정정.
