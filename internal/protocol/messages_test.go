@@ -61,6 +61,106 @@ func TestNilDataYieldsEmptyObject(t *testing.T) {
 	}
 }
 
+func TestJobAssignDataRoundTrip(t *testing.T) {
+	src := JobAssignData{
+		PreviewID:    "p1",
+		RepoFullName: "acme/web",
+		RepoURL:      "https://github.com/acme/web.git",
+		CommitSHA:    "abc123",
+		Branch:       "feature/x",
+		Labels:       map[string]string{"env": "test"},
+	}
+	env, err := NewEnvelope(TypeJobAssign, src)
+	if err != nil {
+		t.Fatalf("NewEnvelope: %v", err)
+	}
+	b, _ := json.Marshal(env)
+	var got Envelope
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var dec JobAssignData
+	if err := got.Decode(&dec); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dec.PreviewID != src.PreviewID || dec.RepoURL != src.RepoURL ||
+		dec.CommitSHA != src.CommitSHA || dec.Labels["env"] != "test" {
+		t.Fatalf("unexpected: %+v", dec)
+	}
+}
+
+func TestStatusUpdateDataRoundTrip(t *testing.T) {
+	host := "127.0.0.1"
+	port := 8080
+	cid := "abc"
+	src := StatusUpdateData{
+		PreviewID:   "p1",
+		Status:      "running",
+		ContainerID: &cid,
+		AgentHost:   &host,
+		AgentPort:   &port,
+	}
+	env, err := NewEnvelope(TypeStatusUpdate, src)
+	if err != nil {
+		t.Fatalf("NewEnvelope: %v", err)
+	}
+	b, _ := json.Marshal(env)
+	var got Envelope
+	_ = json.Unmarshal(b, &got)
+	var dec StatusUpdateData
+	if err := got.Decode(&dec); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dec.AgentHost == nil || *dec.AgentHost != host || dec.AgentPort == nil || *dec.AgentPort != port {
+		t.Fatalf("unexpected: %+v", dec)
+	}
+}
+
+func TestReadyDataRoundTrip(t *testing.T) {
+	src := ReadyData{SlotID: "s1", Capacity: 1}
+	env, err := NewEnvelope(TypeReady, src)
+	if err != nil {
+		t.Fatalf("NewEnvelope: %v", err)
+	}
+	b, _ := json.Marshal(env)
+	var got Envelope
+	_ = json.Unmarshal(b, &got)
+	var dec ReadyData
+	if err := got.Decode(&dec); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if dec.SlotID != "s1" || dec.Capacity != 1 {
+		t.Fatalf("unexpected: %+v", dec)
+	}
+}
+
+func TestJobTeardownAndLogDataRoundTrip(t *testing.T) {
+	td := JobTeardownData{PreviewID: "p1"}
+	env, _ := NewEnvelope(TypeJobTeardown, td)
+	b, _ := json.Marshal(env)
+	var got Envelope
+	_ = json.Unmarshal(b, &got)
+	var dec JobTeardownData
+	if err := got.Decode(&dec); err != nil {
+		t.Fatalf("decode teardown: %v", err)
+	}
+	if dec.PreviewID != "p1" {
+		t.Fatalf("teardown previewID=%s", dec.PreviewID)
+	}
+	lg := LogData{PreviewID: "p1", Stream: "stdout", Line: "hello", TS: 1234}
+	env2, _ := NewEnvelope(TypeLog, lg)
+	b2, _ := json.Marshal(env2)
+	var got2 Envelope
+	_ = json.Unmarshal(b2, &got2)
+	var dec2 LogData
+	if err := got2.Decode(&dec2); err != nil {
+		t.Fatalf("decode log: %v", err)
+	}
+	if dec2.Line != "hello" || dec2.TS != 1234 {
+		t.Fatalf("log dec=%+v", dec2)
+	}
+}
+
 func TestAllTypeConstants(t *testing.T) {
 	// F-19: 9 types + ProtoVersion must exist. This file references them all.
 	types := map[string]string{

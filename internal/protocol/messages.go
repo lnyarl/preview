@@ -64,6 +64,49 @@ type PongData struct {
 	TS int64 `json:"ts"`
 }
 
+// ReadyData 는 Agent 가 빈 슬롯이 생겼을 때 Hub 로 송신하는 본문 (결정 10).
+// MVP: capacity 페이로드 없이 빈도로 표현. SlotID 는 디버깅용 nonce (옵션).
+type ReadyData struct {
+	SlotID   string `json:"slot_id,omitempty"`
+	Capacity int    `json:"capacity,omitempty"`
+}
+
+// JobAssignData 는 Hub 가 Claim 후 Agent 에게 전달하는 작업 본문.
+// Labels 는 preview 의 라벨 echo (Agent 측 진단용).
+type JobAssignData struct {
+	PreviewID    string            `json:"preview_id"`
+	RepoFullName string            `json:"repo_full_name"`
+	RepoURL      string            `json:"repo_url"`
+	CommitSHA    string            `json:"commit_sha"`
+	Branch       string            `json:"branch,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+}
+
+// StatusUpdateData 는 Agent 가 building → running → done|failed 전이 시
+// Hub 로 보내는 본문. nullable 필드는 포인터로 명시(빈 값 set 과 미설정 구분).
+type StatusUpdateData struct {
+	PreviewID    string  `json:"preview_id"`
+	Status       string  `json:"status"`
+	Message      string  `json:"message,omitempty"`
+	ContainerID  *string `json:"container_id,omitempty"`
+	AgentHost    *string `json:"agent_host,omitempty"`
+	AgentPort    *int    `json:"agent_port,omitempty"`
+	ErrorMessage *string `json:"error_message,omitempty"`
+}
+
+// JobTeardownData 는 Hub 가 PR closed 등으로 컨테이너 정리를 요청할 때 송신.
+type JobTeardownData struct {
+	PreviewID string `json:"preview_id"`
+}
+
+// LogData 는 docker logs 스트림 라인 (Phase 2 구조체만 동결, 와이어 미구현 — 결정 14).
+type LogData struct {
+	PreviewID string `json:"preview_id"`
+	Stream    string `json:"stream"`
+	Line      string `json:"line"`
+	TS        int64  `json:"ts"`
+}
+
 // NewEnvelope 는 Type 과 임의의 Data 로부터 Envelope 를 만든다.
 // data 가 nil 이면 빈 JSON 객체({})가 Data 필드에 실린다.
 func NewEnvelope(typ string, data any) (Envelope, error) {
