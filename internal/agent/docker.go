@@ -34,6 +34,19 @@ type RemoveOptions struct {
 	Force bool
 }
 
+// ContainerSummary 는 ContainerList 결과의 하나의 row.
+// 라벨만 사용하므로 좁은 표면.
+type ContainerSummary struct {
+	ID     string
+	Labels map[string]string
+}
+
+// ContainerInspectResult 는 ContainerInspect 결과의 좁은 dto.
+// HostPort 는 컨테이너의 ExposedPort=80 (Phase 2 단일 포트 가정) 에 바인딩된 host port.
+type ContainerInspectResult struct {
+	HostPort int
+}
+
 // DockerClient 는 Agent runner 가 사용하는 Docker SDK 의 좁은 인터페이스.
 type DockerClient interface {
 	// ImageBuild 는 src 디렉토리(tar 또는 디렉토리 경로)로 이미지를 빌드한다.
@@ -54,4 +67,11 @@ type DockerClient interface {
 
 	// Ping 은 daemon 연결 확인.
 	Ping(ctx context.Context) error
+
+	// ContainerList 는 라벨 필터 (key→value) 매칭 컨테이너 목록을 반환한다.
+	// Phase 3 Agent 재기동 시 orphan 복원 (결정 11 / §4-7-1).
+	ContainerList(ctx context.Context, filters map[string]string) ([]ContainerSummary, error)
+
+	// ContainerInspect 는 컨테이너 메타를 반환한다 — 본 Phase 는 HostPort 만 노출.
+	ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error)
 }

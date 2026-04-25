@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lnyarl/preview/internal/protocol"
 )
@@ -46,7 +47,42 @@ type Runner struct {
 	advHost string
 	logger  *slog.Logger
 
-	jobs sync.Map // previewID -> *runningJob
+	jobs     sync.Map    // previewID -> *runningJob
+	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
+	inFlight atomic.Int64
+}
+
+// Pause 는 graceful shutdown 시 신규 JOB_ASSIGN 을 거절하도록 표시한다.
+// 진행 중 build 는 끝까지 진행 (결정 11).
+func (r *Runner) Pause() { r.paused.Store(true) }
+
+// Paused 는 현재 paused 여부를 반환한다.
+func (r *Runner) Paused() bool { return r.paused.Load() }
+
+// InFlight 는 현재 진행 중인 build/run 갯수를 반환한다 (drain polling 용).
+func (r *Runner) InFlight() int { return int(r.inFlight.Load()) }
+
+// RunningPreviewIDs 는 jobs 맵에 있는 previewID 슬라이스 (HELLO.RunningPreviews 채움용).
+func (r *Runner) RunningPreviewIDs() []string {
+	out := []string{}
+	r.jobs.Range(func(k, _ any) bool {
+		if id, ok := k.(string); ok {
+			out = append(out, id)
+		}
+		return true
+	})
+	return out
+}
+
+// RegisterRestoredJob 는 orphan_restore.go 가 docker.ContainerList 결과로 발견한
+// 컨테이너를 jobs 맵에 등록한다 (HELLO 직전 호출).
+func (r *Runner) RegisterRestoredJob(previewID, containerID, host string, port int) {
+	r.jobs.Store(previewID, &runningJob{
+		previewID:   previewID,
+		containerID: containerID,
+		host:        host,
+		port:        port,
+	})
 }
 
 // NewRunner 는 Runner 를 조립한다.
@@ -68,8 +104,24 @@ func NewRunner(docker DockerClient, cache *RepoCache, hub HubSender, advHost str
 
 // Handle 은 JOB_ASSIGN 1건을 처리한다. 실패 시 STATUS_UPDATE failed 송신.
 // 호출자는 보통 별도 goroutine 으로 호출.
+//
+// Phase 3: Pause() 호출 후 진입한 호출은 즉시 STATUS_UPDATE(failed,
+// "agent shutting down") 송신 후 무시 (결정 11 / §5-13).
 func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	pid := msg.PreviewID
+	if r.paused.Load() {
+		r.logger.Info("agent_shutdown_reject_job", "preview_id", pid)
+		errMsg := "agent shutting down"
+		_ = r.hub.SendStatusUpdate(ctx, protocol.StatusUpdateData{
+			PreviewID:    pid,
+			Status:       "failed",
+			Message:      "agent shutting down",
+			ErrorMessage: &errMsg,
+		})
+		return nil
+	}
+	r.inFlight.Add(1)
+	defer r.inFlight.Add(-1)
 	r.logger.Info("agent_job_assign", "preview_id", pid, "repo_url", msg.RepoURL, "sha", msg.CommitSHA)
 
 	// (1) building 송신.

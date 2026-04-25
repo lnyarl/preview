@@ -20,6 +20,7 @@ import (
 
 	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
+	dockerfilters "github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -103,6 +104,58 @@ func (s *sdkDockerClient) ContainerStop(ctx context.Context, id string) error {
 
 func (s *sdkDockerClient) ContainerRemove(ctx context.Context, id string, opts agent.RemoveOptions) error {
 	return s.cli.ContainerRemove(ctx, id, container.RemoveOptions{Force: opts.Force})
+}
+
+// ContainerList 는 라벨 필터로 컨테이너를 조회한다.
+// filters map 의 key 가 라벨 키, value 가 빈 문자열이면 "라벨 키 존재" 매칭,
+// non-empty 면 "key=value" 정확 매칭.
+func (s *sdkDockerClient) ContainerList(ctx context.Context, filters map[string]string) ([]agent.ContainerSummary, error) {
+	args := dockerfilters.NewArgs()
+	for k, v := range filters {
+		if v == "" {
+			args.Add("label", k)
+		} else {
+			args.Add("label", k+"="+v)
+		}
+	}
+	list, err := s.cli.ContainerList(ctx, container.ListOptions{All: true, Filters: args})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agent.ContainerSummary, 0, len(list))
+	for _, c := range list {
+		out = append(out, agent.ContainerSummary{ID: c.ID, Labels: c.Labels})
+	}
+	return out, nil
+}
+
+// ContainerInspect 는 컨테이너의 메타를 조회하고 HostPort 만 추출한다.
+// ExposedPort 80/tcp 의 host port 가 첫 매칭 — 단일 포트 가정 (Phase 2 결정 8).
+func (s *sdkDockerClient) ContainerInspect(ctx context.Context, id string) (agent.ContainerInspectResult, error) {
+	insp, err := s.cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return agent.ContainerInspectResult{}, err
+	}
+	if insp.NetworkSettings != nil {
+		for portKey, bindings := range insp.NetworkSettings.Ports {
+			if portKey == "80/tcp" || string(portKey) == "80/tcp" {
+				if len(bindings) > 0 {
+					if n, perr := strconv.Atoi(bindings[0].HostPort); perr == nil {
+						return agent.ContainerInspectResult{HostPort: n}, nil
+					}
+				}
+			}
+		}
+		// 포트 키가 80/tcp 아닐 수 있으므로 첫 번째 binding 도 fallback.
+		for _, bindings := range insp.NetworkSettings.Ports {
+			if len(bindings) > 0 {
+				if n, perr := strconv.Atoi(bindings[0].HostPort); perr == nil {
+					return agent.ContainerInspectResult{HostPort: n}, nil
+				}
+			}
+		}
+	}
+	return agent.ContainerInspectResult{}, nil
 }
 
 // dockertypesImageBuildOptions 는 SDK 의 build option 객체를 만든다 (별도 함수로 격리).

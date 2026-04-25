@@ -104,11 +104,16 @@ func (c *Client) once(ctx context.Context) error {
 	// 연결 성공 시 backoff 리셋.
 	c.backoff.Reset()
 
-	// HELLO 송신.
+	// HELLO 송신. Phase 3: RunningPreviews 는 runner.jobs 맵 keys (orphan 복원 결과 포함).
+	running := []string{}
+	if c.runner != nil {
+		running = c.runner.RunningPreviewIDs()
+	}
 	hello, err := protocol.NewEnvelope(protocol.TypeHello, protocol.HelloData{
-		Version:       protocol.ProtoVersion,
-		Labels:        c.cfg.Labels,
-		AdvertiseHost: c.cfg.AdvertiseHost,
+		Version:         protocol.ProtoVersion,
+		Labels:          c.cfg.Labels,
+		AdvertiseHost:   c.cfg.AdvertiseHost,
+		RunningPreviews: running,
 	})
 	if err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "hello marshal")
