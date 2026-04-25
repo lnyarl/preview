@@ -25,6 +25,10 @@ const (
 	TypeStatusUpdate = "STATUS_UPDATE"
 	TypeLog          = "LOG"
 	TypeJobTeardown  = "JOB_TEARDOWN"
+	// Phase 4: Hub-managed Agent 빌드 설정 (HELLO 직후 1회 + 변경 시 푸시).
+	// 두 메시지의 페이로드 스키마는 동일하다 (결정 8). 이름만 다르다 — 의도가 다르기 때문.
+	TypeAgentConfig  = "AGENT_CONFIG"
+	TypeConfigUpdate = "CONFIG_UPDATE"
 )
 
 // ProtoVersion 은 HELLO/WELCOME 에 실리는 프로토콜 버전 문자열.
@@ -110,6 +114,18 @@ type LogData struct {
 	Stream    string `json:"stream"`
 	Line      string `json:"line"`
 	TS        int64  `json:"ts"`
+}
+
+// AgentConfigData 는 AGENT_CONFIG / CONFIG_UPDATE 의 본문 (Phase 4).
+//
+// BuildCommands 가 빈 슬라이스([]) 면 기본값(`docker build -t $PREVIEW_IMAGE .`).
+// ContainerPort == 0 이면 기본값(80).
+//
+// 두 sentinel 모두 wire 에 명시 송신된다 (omitempty 미적용) — Agent 측에서
+// "키 부재" 와 "기본값 적용" 의도를 구분할 필요 없이 단일 경로로 처리하기 위함.
+type AgentConfigData struct {
+	BuildCommands []string `json:"build_commands"`
+	ContainerPort int      `json:"container_port"`
 }
 
 // NewEnvelope 는 Type 과 임의의 Data 로부터 Envelope 를 만든다.
