@@ -1,8 +1,10 @@
 // Command agent is the Preview data plane entry point.
 //
 // Phase 1: "start" 서브커맨드로 Hub 에 outbound WebSocket 연결.
+// Phase 3: graceful shutdown — SIGTERM 시 runner.Pause + in-flight build drain (30s).
 //
-// 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-9.
+// 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-9,
+//       docs/specs/phase-3-admin-ui-and-mvp.md §5-13.
 package main
 
 import (
@@ -12,9 +14,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/lnyarl/preview/internal/agent"
 )
+
+// agentShutdownDrainTimeout 는 SIGTERM 후 in-flight build 대기 timeout (결정 13).
+const agentShutdownDrainTimeout = 30 * time.Second
 
 func main() {
 	args := os.Args[1:]
@@ -76,6 +82,26 @@ func runStart(args []string) error {
 	c := agent.NewClient(cfg, logger)
 	runner := agent.NewRunner(docker, cache, c, cfg.AdvertiseHost, logger)
 	c.SetRunner(runner)
+
+	// Phase 3: orphan container restore (결정 11 / §4-7-1).
+	if _, rerr := agent.RestoreOrphans(ctx, docker, runner, cfg.AdvertiseHost, logger); rerr != nil {
+		logger.Warn("agent_orphan_restore_failed", "err", rerr.Error())
+	}
+
+	// Phase 3: SIGTERM → runner.Pause + in-flight drain (§5-13).
+	go func() {
+		<-ctx.Done()
+		runner.Pause()
+		logger.Info("agent_shutdown_pause")
+		deadline := time.Now().Add(agentShutdownDrainTimeout)
+		for runner.InFlight() > 0 && time.Now().Before(deadline) {
+			time.Sleep(200 * time.Millisecond)
+		}
+		if runner.InFlight() > 0 {
+			logger.Warn("agent_shutdown_drain_timeout", "remaining", runner.InFlight())
+		}
+		// wsClient close 는 ctx cancel 로 client.go 의 goroutine 이 처리.
+	}()
 
 	err = c.Run(ctx)
 	logger.Info("graceful shutdown")

@@ -88,6 +88,11 @@ func runDaemon(args []string) error {
 	admin := hub.NewAdminHandler(agentStore, tg, logger)
 	ws := hub.NewWSHandler(agentStore, reg, logger)
 	webhook := hub.NewWebhookHandler(previewStore, cfg.WebhookSecret, logger)
+	adminUI := hub.NewAdminUIHandler(agentStore, previewStore, tg, logger)
+	adminUI.SetRegistry(reg)
+	admin.SetUI(adminUI)
+	webhook.SetUI(adminUI)
+	ws.SetPreviewStore(previewStore)
 
 	// Phase 2 wiring: Dispatcher (READY → JOB_ASSIGN) + StatusUpdater.
 	// resolveRepo 는 PREVIEW_REPO_URL env 가 있으면 그 값으로 echo, 없으면
@@ -104,6 +109,15 @@ func runDaemon(args []string) error {
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)
+	ws.SetTeardownSender(jobSender)
+
+	// Phase 3: SIGTERM 수신 즉시 dispatcher.Pause — 신규 OnReady 차단.
+	// rootCtx 가 취소되면 Run() 의 shutdown() 으로 진입한다.
+	go func() {
+		<-ctx.Done()
+		dispatcher.Pause()
+		logger.Info("dispatcher_paused")
+	}()
 
 	// Phase 2 Step 3: ProxyMiddleware + Reconciler.
 	pm := hub.NewProxyMiddleware(previewStore, cfg.PreviewBaseDomain, logger)
@@ -118,6 +132,6 @@ func runDaemon(args []string) error {
 		"stale_assigned_after", cfg.StaleAssignedAfter.String(),
 	)
 
-	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, pm)
+	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, pm, adminUI)
 	return srv.Run(ctx)
 }
