@@ -55,11 +55,35 @@ func runDaemon() error {
 	// 마이그레이션 미적용인 상태에서 기동하면 agents 테이블이 없어 위 리셋이 실패했을 것.
 	// 따라서 ResetAllOnline 성공이 곧 "스키마 존재" 확인 역할.
 
+	// Phase 2: Hub 기동 시점 잔존 'assigned' preview 를 'queued' 로 복귀
+	// (dispatcher 가 다시 매칭/할당하도록).
+	resetAssigned, err := previewStore.ResetAllAssigned(ctx)
+	if err != nil {
+		return fmt.Errorf("reset assigned: %w", err)
+	}
+	logger.Info("startup_bulk_assigned_reset", "reset_count", resetAssigned)
+
 	tg := token.NewGenerator(cfg.BcryptCost)
 	reg := hub.NewConnRegistry()
 	admin := hub.NewAdminHandler(agentStore, tg, logger)
 	ws := hub.NewWSHandler(agentStore, reg, logger)
 	webhook := hub.NewWebhookHandler(previewStore, cfg.WebhookSecret, logger)
+
+	// Phase 2 wiring: Dispatcher (READY → JOB_ASSIGN) + StatusUpdater.
+	// resolveRepo 는 PREVIEW_REPO_URL env 가 있으면 그 값으로 echo, 없으면
+	// repo_full_name 자체를 fallback (file:///... 같은 fixture 환경 호환).
+	repoURL := cfg.PreviewRepoURL
+	resolveRepo := func(repoFullName string) string {
+		if repoURL != "" {
+			return repoURL
+		}
+		return repoFullName
+	}
+	jobSender := hub.NewWSJobSender(reg, resolveRepo)
+	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, resolveRepo, logger)
+	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
+	ws.SetReady(dispatcher)
+	ws.SetStatusUpdate(statusUpdater)
 
 	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger)
 	return srv.Run(ctx)

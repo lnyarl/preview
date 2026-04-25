@@ -26,6 +26,7 @@ type Config struct {
 	LogLevel          string // slog 레벨 (debug/info/warn/error)
 	WebhookSecret     string // GitHub webhook HMAC secret. 비어있으면 fail-fast.
 	PreviewBaseDomain string // reverse proxy 호스트 매칭 base. Step 3 에서 사용.
+	PreviewRepoURL    string // 단일 레포 가정(결정 9). webhook 의 repo_full_name 을 git URL 로 변환.
 }
 
 // DefaultConfig 는 env 를 읽어 기본값이 채워진 Config 를 만든다.
@@ -38,6 +39,7 @@ func DefaultConfig() Config {
 		LogLevel:          envOr("LOG_LEVEL", "info"),
 		WebhookSecret:     os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		PreviewBaseDomain: envOr("PREVIEW_BASE_DOMAIN", "preview.localhost"),
+		PreviewRepoURL:    os.Getenv("PREVIEW_REPO_URL"),
 	}
 }
 
