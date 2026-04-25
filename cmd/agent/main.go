@@ -83,6 +83,12 @@ func runStart(args []string) error {
 	runner := agent.NewRunner(docker, cache, c, cfg.AdvertiseHost, logger)
 	c.SetRunner(runner)
 
+	// Phase 4: in-memory 빌드 설정 보관소. 초기 상태는 빈 Config (= 기본값으로 동작).
+	// HELLO 직후 Hub 가 보내는 AGENT_CONFIG 가 첫 Replace 를 수행한다.
+	holder := agent.NewHolder()
+	c.SetHolder(holder)
+	runner.SetHolder(holder)
+
 	// Phase 3: orphan container restore (결정 11 / §4-7-1).
 	if _, rerr := agent.RestoreOrphans(ctx, docker, runner, cfg.AdvertiseHost, logger); rerr != nil {
 		logger.Warn("agent_orphan_restore_failed", "err", rerr.Error())

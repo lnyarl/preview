@@ -122,6 +122,8 @@ func runDaemon(args []string) error {
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)
 	ws.SetTeardownSender(jobSender)
+	// Phase 4: Admin UI 의 폼 저장 → 즉시 CONFIG_UPDATE 푸시 경로.
+	adminUI.SetJobSender(jobSender)
 
 	// Phase 3: SIGTERM 수신 즉시 dispatcher.Pause — 신규 OnReady 차단.
 	// rootCtx 가 취소되면 Run() 의 shutdown() 으로 진입한다.
