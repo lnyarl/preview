@@ -245,9 +245,17 @@ func (s *PreviewStore) ListAll(ctx context.Context) ([]store.Preview, error) {
 	return out, nil
 }
 
-// FindByHost 는 Step 2/3 에서 구현. 본 Step 에서는 stub.
-func (s *PreviewStore) FindByHost(_ context.Context, _ string, _ int) (*store.Preview, error) {
-	return nil, store.ErrNotImplementedStep1
+// FindByHost 는 pr_number 로 preview 를 찾는다. 없으면 ErrNotFound.
+// repoFullName 은 미래 multi-repo 확장용 예약 파라미터 — 현재는 무시.
+func (s *PreviewStore) FindByHost(ctx context.Context, _ string, prNumber int) (*store.Preview, error) {
+	row, err := s.q.FindPreviewByHost(ctx, int64(prNumber))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, fmt.Errorf("sqlite.FindByHost: %w", err)
+	}
+	return previewRowToDomain(row)
 }
 
 // ListQueuedForCandidates 는 status='queued' 인 모든 preview 를 created_at ASC 로 반환한다.
@@ -396,19 +404,64 @@ func (s *PreviewStore) ResetAllAssigned(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// ListRunningByAgent 는 Step 3 에서 구현. 본 Step 에서는 stub.
-func (s *PreviewStore) ListRunningByAgent(_ context.Context, _ string) ([]store.Preview, error) {
-	return nil, store.ErrNotImplementedStep1
+// ListRunningByAgent 는 status='running' 이고 assigned_agent_id=agentID 인 row.
+// reconciler 가 offline agent 의 보존 카운트용으로 사용.
+func (s *PreviewStore) ListRunningByAgent(ctx context.Context, agentID string) ([]store.Preview, error) {
+	rows, err := s.q.ListRunningPreviewsByAgent(ctx, sql.NullString{String: agentID, Valid: true})
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListRunningByAgent: %w", err)
+	}
+	out := make([]store.Preview, 0, len(rows))
+	for _, r := range rows {
+		p, err := previewRowToDomain(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, nil
 }
 
-// ListStaleAssigned 는 Step 3 에서 구현. 본 Step 에서는 stub.
-func (s *PreviewStore) ListStaleAssigned(_ context.Context, _ time.Time) ([]store.Preview, error) {
-	return nil, store.ErrNotImplementedStep1
+// ListStaleAssigned 는 status='assigned' 이고 updated_at < staleAfter 인 row.
+// reconciler 가 stale assigned → queued 회수용으로 사용.
+func (s *PreviewStore) ListStaleAssigned(ctx context.Context, staleAfter time.Time) ([]store.Preview, error) {
+	rows, err := s.q.ListStaleAssignedPreviews(ctx, staleAfter.UTC().Format(iso8601))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListStaleAssigned: %w", err)
+	}
+	out := make([]store.Preview, 0, len(rows))
+	for _, r := range rows {
+		p, err := previewRowToDomain(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, nil
 }
 
-// ListByAgent 는 Step 3 에서 구현. 본 Step 에서는 stub.
-func (s *PreviewStore) ListByAgent(_ context.Context, _ string, _ []string) ([]store.Preview, error) {
-	return nil, store.ErrNotImplementedStep1
+// ListByAgent 는 assigned_agent_id=agentID 이고 status IN statuses 인 row.
+// statuses 가 비어있으면 nil 반환 (sqlc.slice 빈 슬라이스 보호).
+func (s *PreviewStore) ListByAgent(ctx context.Context, agentID string, statuses []string) ([]store.Preview, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	rows, err := s.q.ListByAgent(ctx, ListByAgentParams{
+		AssignedAgentID: sql.NullString{String: agentID, Valid: true},
+		Statuses:        statuses,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListByAgent: %w", err)
+	}
+	out := make([]store.Preview, 0, len(rows))
+	for _, r := range rows {
+		p, err := previewRowToDomain(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, nil
 }
 
 // CountPreviewEvents 는 단위 테스트용 helper. preview_id 의 이벤트 수 반환.

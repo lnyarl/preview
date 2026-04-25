@@ -512,19 +512,92 @@ func TestPreviewStoreResetAllAssigned(t *testing.T) {
 	}
 }
 
-func TestPreviewStoreStep3StubsReturnNotImplemented(t *testing.T) {
+// TestPreviewStoreStep3Lookups 는 Step 3 에서 stub 을 대체한 4 개 메서드의
+// happy-path 동작을 확인한다. (이전 step 의 stub 검증 테스트는 본 Step 에서 제거.)
+func TestPreviewStoreStep3Lookups(t *testing.T) {
 	s := newTestPreviewStore(t)
+	seedAgent(t, s, "agent-1")
 	ctx := context.Background()
-	if _, err := s.FindByHost(ctx, "x", 1); err != store.ErrNotImplementedStep1 {
-		t.Fatalf("FindByHost err=%v", err)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// (1) PR=1: queued 로 시작.
+	id1 := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: id1, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "aa", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(1): %v", err)
 	}
-	if _, err := s.ListRunningByAgent(ctx, "a"); err != store.ErrNotImplementedStep1 {
-		t.Fatalf("ListRunningByAgent err=%v", err)
+	if _, err := s.Claim(ctx, []string{id1}, "agent-1", now); err != nil {
+		t.Fatalf("Claim(1): %v", err)
 	}
-	if _, err := s.ListStaleAssigned(ctx, time.Now()); err != store.ErrNotImplementedStep1 {
-		t.Fatalf("ListStaleAssigned err=%v", err)
+	// stale 임계 통과를 위해 updated_at 을 10분 전으로 강제.
+	stale := now.Add(-10 * time.Minute).Format(iso8601)
+	if _, err := s.db.ExecContext(ctx, `UPDATE previews SET updated_at = ? WHERE id = ?`, stale, id1); err != nil {
+		t.Fatalf("force stale: %v", err)
 	}
-	if _, err := s.ListByAgent(ctx, "a", []string{"queued"}); err != store.ErrNotImplementedStep1 {
-		t.Fatalf("ListByAgent err=%v", err)
+
+	// FindByHost: PR 1 → id1 매칭.
+	got, err := s.FindByHost(ctx, "acme/web", 1)
+	if err != nil {
+		t.Fatalf("FindByHost: %v", err)
+	}
+	if got.ID != id1 {
+		t.Fatalf("FindByHost id=%s want %s", got.ID, id1)
+	}
+	if _, err := s.FindByHost(ctx, "acme/web", 999); err != store.ErrNotFound {
+		t.Fatalf("FindByHost(missing) err=%v want ErrNotFound", err)
+	}
+
+	// ListStaleAssigned: 5분 임계로 id1 매칭.
+	stales, err := s.ListStaleAssigned(ctx, now.Add(-5*time.Minute))
+	if err != nil {
+		t.Fatalf("ListStaleAssigned: %v", err)
+	}
+	if len(stales) != 1 || stales[0].ID != id1 {
+		t.Fatalf("ListStaleAssigned=%+v want [%s]", stales, id1)
+	}
+
+	// (2) PR=2: running + agent-1 할당.
+	id2 := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: id2, RepoFullName: "acme/web", PrNumber: 2,
+		CommitSha: "bb", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(2): %v", err)
+	}
+	if _, err := s.Claim(ctx, []string{id2}, "agent-1", now); err != nil {
+		t.Fatalf("Claim(2): %v", err)
+	}
+	agentID := "agent-1"
+	if err := s.UpdateStatus(ctx, id2, "assigned", "running", "", now,
+		store.PreviewFields{AssignedAgentID: &agentID}); err != nil {
+		t.Fatalf("UpdateStatus(running): %v", err)
+	}
+
+	running, err := s.ListRunningByAgent(ctx, "agent-1")
+	if err != nil {
+		t.Fatalf("ListRunningByAgent: %v", err)
+	}
+	if len(running) != 1 || running[0].ID != id2 {
+		t.Fatalf("ListRunningByAgent=%+v want [%s]", running, id2)
+	}
+
+	// ListByAgent("agent-1", [assigned, running]) → id1 + id2 (둘 다 매칭).
+	all, err := s.ListByAgent(ctx, "agent-1", []string{"assigned", "running"})
+	if err != nil {
+		t.Fatalf("ListByAgent: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListByAgent len=%d want 2", len(all))
+	}
+
+	// 빈 statuses → nil.
+	empty, err := s.ListByAgent(ctx, "agent-1", nil)
+	if err != nil {
+		t.Fatalf("ListByAgent(empty): %v", err)
+	}
+	if empty != nil {
+		t.Fatalf("ListByAgent(empty)=%+v want nil", empty)
 	}
 }
