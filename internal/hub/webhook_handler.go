@@ -55,12 +55,27 @@ type pullRequestEvent struct {
 	} `json:"repository"`
 }
 
+// TeardownSender 는 Agent 에게 JOB_TEARDOWN 을 송신하는 인터페이스.
+// 구현: ConnRegistry 위의 WSJobSender (ws_registry.go).
+type TeardownSender interface {
+	SendTeardown(ctx context.Context, agentID, previewID string) error
+}
+
+// PreviewCacheNotifier 는 preview 상태 변경 시 proxy 캐시를 무효화하는 인터페이스.
+type PreviewCacheNotifier interface {
+	Invalidate(previewID string)
+}
+
 // WebhookHandler 는 /webhooks/github 와 /admin/previews 를 처리한다.
+// TeardownSender / CacheNotifier 는 옵션 — nil 일 때는 동작 자체는 정상이고
+// JOB_TEARDOWN 송신/캐시 무효화만 스킵한다 (Step 1 컴파일 호환성).
 type WebhookHandler struct {
-	Store         store.PreviewStore
-	WebhookSecret []byte
-	Logger        *slog.Logger
-	now           func() time.Time
+	Store          store.PreviewStore
+	WebhookSecret  []byte
+	Logger         *slog.Logger
+	TeardownSender TeardownSender       // optional, nil-safe
+	CacheNotifier  PreviewCacheNotifier // optional, nil-safe
+	now            func() time.Time
 }
 
 // NewWebhookHandler 는 WebhookHandler 를 조립한다. secret 은 비어있지 않다고 가정.
@@ -78,7 +93,14 @@ func (h *WebhookHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhooks/github", h.handleWebhook)
 	mux.HandleFunc("GET /admin/previews", h.listPreviews)
 	mux.HandleFunc("GET /admin/previews/{id}", h.getPreview)
+	mux.HandleFunc("DELETE /admin/previews/{id}", h.deletePreview)
 }
+
+// SetTeardownSender 는 JOB_TEARDOWN 송신자를 주입한다.
+func (h *WebhookHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender = s }
+
+// SetCacheNotifier 는 proxy 캐시 무효화 콜백을 주입한다.
+func (h *WebhookHandler) SetCacheNotifier(n PreviewCacheNotifier) { h.CacheNotifier = n }
 
 // PreviewView 는 /admin/previews 응답 DTO. nullable 필드는 *string/*int 로 명시.
 type PreviewView struct {
@@ -265,6 +287,21 @@ func (h *WebhookHandler) handleClose(w http.ResponseWriter, ctx context.Context,
 		writeError(w, http.StatusInternalServerError, "internal", "close failed")
 		return
 	}
+
+	// JOB_TEARDOWN 송신 (assigned/running/building 상태의 agent 에게).
+	// 에러는 무시 — reconciler 가 후속 처리.
+	if h.TeardownSender != nil && existing.AssignedAgentID != nil {
+		if err := h.TeardownSender.SendTeardown(ctx, *existing.AssignedAgentID, existing.ID); err != nil {
+			h.Logger.Warn("teardown_send_failed", "preview_id", existing.ID,
+				"agent_id", *existing.AssignedAgentID, "err", err.Error())
+		}
+	}
+
+	// 프록시 캐시 무효화.
+	if h.CacheNotifier != nil {
+		h.CacheNotifier.Invalidate(existing.ID)
+	}
+
 	h.Logger.Info("preview_webhook_processed",
 		"action", "closed",
 		"preview_id", existing.ID,
@@ -273,6 +310,47 @@ func (h *WebhookHandler) handleClose(w http.ResponseWriter, ctx context.Context,
 		"status", "teardown",
 	)
 	writeJSON(w, http.StatusAccepted, map[string]any{"preview_id": existing.ID, "status": "teardown"})
+}
+
+// deletePreview 는 DELETE /admin/previews/{id} 핸들러.
+// 강제 teardown — 호출 후 status=teardown, agent 에 JOB_TEARDOWN 송신, 캐시 무효화.
+func (h *WebhookHandler) deletePreview(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusNotFound, "not_found", "preview id required")
+		return
+	}
+	p, err := h.Store.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "preview not found")
+			return
+		}
+		h.Logger.Error("preview_delete_lookup_failed", "err", err.Error(), "preview_id", id)
+		writeError(w, http.StatusInternalServerError, "internal", "get failed")
+		return
+	}
+	now := h.now()
+	if err := h.Store.UpdateStatus(r.Context(), id, "", "teardown", "manual_teardown", now, store.PreviewFields{}); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "preview not found")
+			return
+		}
+		h.Logger.Error("preview_delete_failed", "err", err.Error(), "preview_id", id)
+		writeError(w, http.StatusInternalServerError, "internal", "teardown failed")
+		return
+	}
+	if h.TeardownSender != nil && p.AssignedAgentID != nil {
+		if err := h.TeardownSender.SendTeardown(r.Context(), *p.AssignedAgentID, id); err != nil {
+			h.Logger.Warn("teardown_send_failed", "preview_id", id,
+				"agent_id", *p.AssignedAgentID, "err", err.Error())
+		}
+	}
+	if h.CacheNotifier != nil {
+		h.CacheNotifier.Invalidate(id)
+	}
+	h.Logger.Info("preview_manual_teardown", "preview_id", id)
+	writeJSON(w, http.StatusAccepted, map[string]any{"preview_id": id, "status": "teardown"})
 }
 
 // findPreviewByRepoPR 은 PreviewStore 인터페이스 위에서 (repo, pr) 조회를 수행.
