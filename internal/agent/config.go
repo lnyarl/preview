@@ -1,10 +1,12 @@
 // 이 파일의 책임:
 //   - Agent CLI 플래그·env 파싱.
 //   - Phase 2: --repo-url(필수) / --work-dir / --prefetch-interval / --max-jobs.
+//   - Phase 5: --max-jobs hard cap 64 클램프 (결정 11).
 //
 // 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-7,
 //
-//	docs/specs/phase-2-webhook-dispatch-proxy.md §5-9.
+//	docs/specs/phase-2-webhook-dispatch-proxy.md §5-9,
+//	docs/specs/phase-5-multi-job.md §3 결정 11.
 package agent
 
 import (
@@ -18,6 +20,10 @@ import (
 // ErrMissingRequiredFlag 는 필수 플래그(env 포함) 부재를 표시하는 sentinel.
 // main.go 가 이 오류를 식별해 exit code 2(usage error)로 매핑한다 (F-S2-5).
 var ErrMissingRequiredFlag = errors.New("missing required flag")
+
+// maxJobsHardCap 은 --max-jobs 의 상한 (Phase 5 결정 11).
+// 일반 머신 코어 수의 4~8 배 상한 — 비현실적 입력 방어선.
+const maxJobsHardCap = 64
 
 // Config 는 Agent start 서브커맨드 실행에 필요한 설정.
 // 라벨은 Hub 에서 관리하므로 Agent 에 없다 — Hub 대시보드에서 에이전트별로 설정한다.
@@ -66,6 +72,15 @@ func ParseConfig(args []string) (Config, error) {
 	}
 	if *maxJobs < 1 {
 		*maxJobs = 1
+	}
+	// Phase 5 결정 11: hard cap 64 — 운영자 실수(예: --max-jobs 10000)로
+	// maybeSendReady 의 conn.Write 폭주를 방지한다. 거절(exit 2)이 아닌 클램프
+	// + warn 로그로 처리해 자동 부팅 스크립트의 운영 사고를 막는다.
+	if *maxJobs > maxJobsHardCap {
+		fmt.Fprintf(os.Stderr,
+			"warn: --max-jobs=%d exceeds hard cap %d; clamping to %d\n",
+			*maxJobs, maxJobsHardCap, maxJobsHardCap)
+		*maxJobs = maxJobsHardCap
 	}
 	return Config{
 		HubURL:           *hubURL,

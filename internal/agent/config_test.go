@@ -75,3 +75,71 @@ func TestParseConfigMissingRepoURL(t *testing.T) {
 		t.Fatalf("err=%v, want errors.Is ErrMissingRequiredFlag", err)
 	}
 }
+
+// F-21 (Phase 5): --max-jobs 5 가 cfg.MaxJobs 까지 그대로 전달된다.
+func TestParseConfigMaxJobsFlag(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--max-jobs", "5",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.MaxJobs != 5 {
+		t.Fatalf("MaxJobs=%d want 5", cfg.MaxJobs)
+	}
+}
+
+// F-23 (Phase 5 결정 11): --max-jobs 10000 → cfg.MaxJobs == 64 로 클램프.
+func TestParseConfigMaxJobsHardCap(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--max-jobs", "10000",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.MaxJobs != maxJobsHardCap {
+		t.Fatalf("MaxJobs=%d want %d (hard cap)", cfg.MaxJobs, maxJobsHardCap)
+	}
+}
+
+// F-23 보강: 정확히 64 입력은 그대로 통과 (경계값).
+func TestParseConfigMaxJobsAtCap(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--max-jobs", "64",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.MaxJobs != 64 {
+		t.Fatalf("MaxJobs=%d want 64", cfg.MaxJobs)
+	}
+}
+
+// F-23 보강: < 1 입력은 1 로 보정.
+func TestParseConfigMaxJobsBelowMin(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--max-jobs", "0",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.MaxJobs != 1 {
+		t.Fatalf("MaxJobs=%d want 1", cfg.MaxJobs)
+	}
+}
