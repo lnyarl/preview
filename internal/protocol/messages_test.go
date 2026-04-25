@@ -6,7 +6,7 @@ import (
 )
 
 func TestEnvelopeRoundTrip(t *testing.T) {
-	hello := HelloData{Version: ProtoVersion, Labels: map[string]string{"env": "local"}}
+	hello := HelloData{Version: ProtoVersion, Labels: []string{"local"}}
 	env, err := NewEnvelope(TypeHello, hello)
 	if err != nil {
 		t.Fatalf("NewEnvelope: %v", err)
@@ -26,7 +26,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	if err := got.Decode(&decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if decoded.Version != hello.Version || decoded.Labels["env"] != "local" {
+	if decoded.Version != hello.Version || len(decoded.Labels) != 1 || decoded.Labels[0] != "local" {
 		t.Fatalf("unexpected decoded: %+v", decoded)
 	}
 }
@@ -68,7 +68,7 @@ func TestJobAssignDataRoundTrip(t *testing.T) {
 		RepoURL:      "https://github.com/acme/web.git",
 		CommitSHA:    "abc123",
 		Branch:       "feature/x",
-		Labels:       map[string]string{"env": "test"},
+		Labels:       []string{"test"},
 	}
 	env, err := NewEnvelope(TypeJobAssign, src)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestJobAssignDataRoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if dec.PreviewID != src.PreviewID || dec.RepoURL != src.RepoURL ||
-		dec.CommitSHA != src.CommitSHA || dec.Labels["env"] != "test" {
+		dec.CommitSHA != src.CommitSHA || len(dec.Labels) != 1 || dec.Labels[0] != "test" {
 		t.Fatalf("unexpected: %+v", dec)
 	}
 }

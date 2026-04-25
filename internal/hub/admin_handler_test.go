@@ -175,7 +175,7 @@ func TestAdminHealth(t *testing.T) {
 
 func TestAdminCreateAgent(t *testing.T) {
 	srv, as := newAdminTestServer(t)
-	payload := []byte(`{"name":"test-agent","labels":{"env":"local"}}`)
+	payload := []byte(`{"name":"test-agent","labels":["local"]}`)
 	resp, err := http.Post(srv.URL+"/admin/agents", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		t.Fatalf("post: %v", err)

@@ -10,8 +10,8 @@ import (
 )
 
 func TestMessageRoundTrip(t *testing.T) {
-	helloLabels := map[string]string{"env": "home"}
-	jobLabels := map[string]string{"env": "home"}
+	helloLabels := []string{"home"}
+	jobLabels := []string{"home"}
 	containerID := "container-123"
 	host := "127.0.0.1"
 	port := 30001

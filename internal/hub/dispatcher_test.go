@@ -120,16 +120,16 @@ func newTestDispatcher(t *testing.T, ps store.PreviewStore, as store.AgentStore,
 }
 
 func TestDispatcherOnReadyMatchesAndClaims(t *testing.T) {
-	want := store.Preview{ID: "p2", RepoFullName: "acme/web", PrNumber: 2, Labels: map[string]string{"env": "test"}}
+	want := store.Preview{ID: "p2", RepoFullName: "acme/web", PrNumber: 2, Labels: []string{"test"}}
 	ps := &dispFakePreviewStore{
 		candidates: []store.Preview{
-			{ID: "p1", Labels: map[string]string{"env": "prod"}},
+			{ID: "p1", Labels: []string{"prod"}},
 			want,
-			{ID: "p3", Labels: map[string]string{"env": "test"}},
+			{ID: "p3", Labels: []string{"test"}},
 		},
 		claimReturn: &want,
 	}
-	as := &fakeAgentStore{agent: &store.Agent{ID: "a1", Labels: map[string]string{"env": "test"}}}
+	as := &fakeAgentStore{agent: &store.Agent{ID: "a1", Labels: []string{"test"}}}
 	sender := &fakeSender{}
 	d := newTestDispatcher(t, ps, as, sender)
 
@@ -151,10 +151,10 @@ func TestDispatcherOnReadyMatchesAndClaims(t *testing.T) {
 func TestDispatcherOnReadyNoMatch(t *testing.T) {
 	ps := &dispFakePreviewStore{
 		candidates: []store.Preview{
-			{ID: "p1", Labels: map[string]string{"env": "prod"}},
+			{ID: "p1", Labels: []string{"prod"}},
 		},
 	}
-	as := &fakeAgentStore{agent: &store.Agent{ID: "a1", Labels: map[string]string{"env": "test"}}}
+	as := &fakeAgentStore{agent: &store.Agent{ID: "a1", Labels: []string{"test"}}}
 	sender := &fakeSender{}
 	d := newTestDispatcher(t, ps, as, sender)
 	if err := d.OnReady(context.Background(), "a1"); err != nil {
@@ -180,7 +180,7 @@ func TestDispatcherOnReadyEmptyQueue(t *testing.T) {
 
 func TestDispatcherOnReadyClaimNotFoundIsNoOp(t *testing.T) {
 	ps := &dispFakePreviewStore{
-		candidates: []store.Preview{{ID: "p1", Labels: map[string]string{}}},
+		candidates: []store.Preview{{ID: "p1", Labels: []string{}}},
 		claimErr:   store.ErrNotFound,
 	}
 	as := &fakeAgentStore{agent: &store.Agent{ID: "a1"}}

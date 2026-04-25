@@ -51,7 +51,7 @@ func TestPreviewStoreUpsertNewInsertsEvent(t *testing.T) {
 		PrNumber:     42,
 		CommitSha:    "abc123",
 		Branch:       "feature/x",
-		Labels:       map[string]string{"env": "home"},
+		Labels:       []string{"home"},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -103,7 +103,7 @@ func TestPreviewStoreUpsertExistingUpdatesNoEvent(t *testing.T) {
 		PrNumber:     42,
 		CommitSha:    "abc123",
 		Branch:       "feature/x",
-		Labels:       map[string]string{},
+		Labels: []string{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -161,7 +161,7 @@ func TestPreviewStoreUpdateStatusInsertsEvent(t *testing.T) {
 		RepoFullName: "acme/web",
 		PrNumber:     7,
 		CommitSha:    "abc",
-		Labels:       map[string]string{},
+		Labels: []string{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -206,7 +206,7 @@ func TestPreviewStoreUpdateStatusCASStaleState(t *testing.T) {
 	id := uuid.NewString()
 	p := store.Preview{
 		ID: id, RepoFullName: "acme/web", PrNumber: 1,
-		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 	}
 	if _, _, err := s.Upsert(ctx, p); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -225,7 +225,7 @@ func TestPreviewStoreListAll(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		p := store.Preview{
 			ID: uuid.NewString(), RepoFullName: "acme/web", PrNumber: i,
-			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+			CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -258,7 +258,7 @@ func TestPreviewStoreListQueuedForCandidates(t *testing.T) {
 		ids = append(ids, id)
 		p := store.Preview{
 			ID: id, RepoFullName: "acme/web", PrNumber: i,
-			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now.Add(time.Duration(i) * time.Second), UpdatedAt: now.Add(time.Duration(i) * time.Second),
+			CommitSha: "abc", Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Second), UpdatedAt: now.Add(time.Duration(i) * time.Second),
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -292,7 +292,7 @@ func TestPreviewStoreClaimSuccess(t *testing.T) {
 	id := uuid.NewString()
 	p := store.Preview{
 		ID: id, RepoFullName: "acme/web", PrNumber: 1,
-		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 	}
 	if _, _, err := s.Upsert(ctx, p); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -335,7 +335,7 @@ func TestClaimPreviewRace(t *testing.T) {
 	id := uuid.NewString()
 	p := store.Preview{
 		ID: id, RepoFullName: "acme/web", PrNumber: 1,
-		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 	}
 	if _, _, err := s.Upsert(ctx, p); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -379,7 +379,7 @@ func TestClaimPreviewMultiCandidateRace(t *testing.T) {
 		ids = append(ids, id)
 		p := store.Preview{
 			ID: id, RepoFullName: "acme/web", PrNumber: i + 1,
-			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now.Add(time.Duration(i) * time.Millisecond), UpdatedAt: now,
+			CommitSha: "abc", Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Millisecond), UpdatedAt: now,
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -433,7 +433,7 @@ func TestPreviewStoreUpdateStatusFields(t *testing.T) {
 	id := uuid.NewString()
 	p := store.Preview{
 		ID: id, RepoFullName: "acme/web", PrNumber: 1,
-		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 	}
 	if _, _, err := s.Upsert(ctx, p); err != nil {
 		t.Fatalf("Upsert: %v", err)
@@ -479,7 +479,7 @@ func TestPreviewStoreResetAllAssigned(t *testing.T) {
 		ids = append(ids, id)
 		p := store.Preview{
 			ID: id, RepoFullName: "acme/web", PrNumber: i + 1,
-			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+			CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -524,7 +524,7 @@ func TestPreviewStoreStep3Lookups(t *testing.T) {
 	id1 := uuid.NewString()
 	if _, _, err := s.Upsert(ctx, store.Preview{
 		ID: id1, RepoFullName: "acme/web", PrNumber: 1,
-		CommitSha: "aa", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		CommitSha: "aa", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("Upsert(1): %v", err)
 	}
@@ -562,7 +562,7 @@ func TestPreviewStoreStep3Lookups(t *testing.T) {
 	id2 := uuid.NewString()
 	if _, _, err := s.Upsert(ctx, store.Preview{
 		ID: id2, RepoFullName: "acme/web", PrNumber: 2,
-		CommitSha: "bb", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		CommitSha: "bb", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("Upsert(2): %v", err)
 	}

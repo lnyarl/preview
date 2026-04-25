@@ -36,7 +36,7 @@ func TestAgentStoreCRUD(t *testing.T) {
 		ID:        "00000000-0000-0000-0000-000000000001",
 		Name:      "agent-1",
 		TokenHash: "$2a$04$dummyhash",
-		Labels:    map[string]string{"env": "local"},
+		Labels:    []string{"local"},
 		Status:    "offline",
 		CreatedAt: time.Now().UTC(),
 	}
@@ -56,7 +56,7 @@ func TestAgentStoreCRUD(t *testing.T) {
 	if got.ID != agent.ID {
 		t.Fatalf("GetByName ID=%q want %q", got.ID, agent.ID)
 	}
-	if got.Labels["env"] != "local" {
+	if len(got.Labels) != 1 || got.Labels[0] != "local" {
 		t.Fatalf("labels not preserved: %+v", got.Labels)
 	}
 

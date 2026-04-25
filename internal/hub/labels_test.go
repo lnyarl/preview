@@ -3,20 +3,21 @@ package hub
 import "testing"
 
 // TestLabelsMatch covers the 6 cases from spec §3 결정 4 + nil edge(F-S2-3).
+// Labels 가 []string 으로 단순화되었으므로 set-membership 의미론으로 매칭한다.
 func TestLabelsMatch(t *testing.T) {
 	cases := []struct {
 		name    string
-		preview map[string]string
-		agent   map[string]string
+		preview []string
+		agent   []string
 		want    bool
 	}{
-		{"both empty", map[string]string{}, map[string]string{}, true},
-		{"preview empty agent has", map[string]string{}, map[string]string{"env": "home"}, true},
-		{"preview has agent empty", map[string]string{"env": "home"}, map[string]string{}, false},
-		{"agent superset", map[string]string{"env": "home"}, map[string]string{"env": "home", "owner": "alice"}, true},
-		{"agent missing key", map[string]string{"env": "home", "owner": "alice"}, map[string]string{"env": "home"}, false},
-		{"value mismatch", map[string]string{"env": "home"}, map[string]string{"env": "office"}, false},
-		{"nil maps", nil, nil, true},
+		{"both empty", []string{}, []string{}, true},
+		{"preview empty agent has", []string{}, []string{"home"}, true},
+		{"preview has agent empty", []string{"home"}, []string{}, false},
+		{"agent superset", []string{"home"}, []string{"home", "alice"}, true},
+		{"agent missing value", []string{"home", "alice"}, []string{"home"}, false},
+		{"value mismatch", []string{"home"}, []string{"office"}, false},
+		{"nil slices", nil, nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

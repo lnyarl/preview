@@ -439,7 +439,7 @@ func TestAdminAgentDetailRenders(t *testing.T) {
 
 	_ = as.Create(context.Background(), store.Agent{
 		ID: "a1", Name: "agent-home", Status: "online",
-		Labels: map[string]string{"env": "home"}, CreatedAt: time.Now().UTC(),
+		Labels: []string{"home"}, CreatedAt: time.Now().UTC(),
 	})
 
 	req := httptest.NewRequest("GET", "/admin/agents/a1", nil)
@@ -454,7 +454,8 @@ func TestAdminAgentDetailRenders(t *testing.T) {
 		"agent-home",
 		`name="run_commands"`,
 		`name="container_port"`,
-		`placeholder="80"`,
+		`value="80"`,
+		"docker build -t preview-$PREVIEW_ID:latest .",
 		"$PREVIEW_ID",
 		"$PREVIEW_SHA",
 		"$PREVIEW_BRANCH",

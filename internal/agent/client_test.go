@@ -81,7 +81,7 @@ func TestClientHandshakeSuccessAndShutdown(t *testing.T) {
 	cfg := Config{
 		HubURL: wsURL,
 		Token:  "agt_fake",
-		Labels: map[string]string{"env": "test"},
+		Labels: []string{"test"},
 	}
 	c := NewClient(cfg, silentLogger())
 
@@ -97,7 +97,7 @@ func TestClientHandshakeSuccessAndShutdown(t *testing.T) {
 		if hello.Version != protocol.ProtoVersion {
 			t.Fatalf("hello.version=%q want %q", hello.Version, protocol.ProtoVersion)
 		}
-		if hello.Labels["env"] != "test" {
+		if len(hello.Labels) != 1 || hello.Labels[0] != "test" {
 			t.Fatalf("labels=%+v", hello.Labels)
 		}
 	case <-time.After(3 * time.Second):

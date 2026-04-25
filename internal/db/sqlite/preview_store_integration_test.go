@@ -27,7 +27,7 @@ func TestPreviewStoreIntegration(t *testing.T) {
 		PrNumber:     1,
 		CommitSha:    "sha-1",
 		Branch:       "feat/x",
-		Labels:       map[string]string{"env": "test"},
+		Labels:       []string{"test"},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
