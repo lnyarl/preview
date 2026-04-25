@@ -1,0 +1,63 @@
+{{define "content"}}
+<hgroup>
+  <h1>Agent: {{.Name}}</h1>
+  <h2>Status: {{.Status}}{{if .LastSeenString}} · Last seen: {{.LastSeenString}}{{end}}</h2>
+</hgroup>
+
+<p><a href="/admin/agents">&larr; Back to agents</a></p>
+
+{{if .Error}}
+  <article role="alert">{{.Error}}</article>
+{{end}}
+
+{{if .SavedFlash}}
+  <article role="alert">Saved. CONFIG_UPDATE was {{.PushOutcome}}.</article>
+{{end}}
+
+<section>
+  <h3>Metadata</h3>
+  <dl>
+    <dt>ID</dt><dd><code>{{.AgentID}}</code></dd>
+    <dt>Labels</dt><dd>{{if .LabelsString}}{{.LabelsString}}{{else}}<em>none</em>{{end}}</dd>
+    <dt>Created</dt><dd>{{.CreatedString}}</dd>
+  </dl>
+</section>
+
+<section>
+  <h3>Build Configuration</h3>
+  <form method="POST" action="/admin/agents/{{.AgentID}}/config">
+    <label for="build_commands">Build commands (one per line)</label>
+    <textarea id="build_commands" name="build_commands" rows="6"
+              placeholder="docker build -t $PREVIEW_IMAGE .">{{.BuildCommandsText}}</textarea>
+    <small>Each line runs as <code>sh -c &lt;line&gt;</code> with <code>cwd=worktree</code>. Non-zero exit aborts the build. Leave empty to use the default.</small>
+
+    <label for="container_port">Container port</label>
+    <input type="number" id="container_port" name="container_port"
+           min="1" max="65535" placeholder="80"
+           {{if gt .ContainerPort 0}}value="{{.ContainerPort}}"{{end}}>
+    <small>Port the application listens on inside the container. Empty / 0 / out-of-range = default 80.</small>
+
+    <button type="submit">Save</button>
+  </form>
+  <small>Changes apply to the <strong>next</strong> build. In-flight builds keep their snapshot.</small>
+</section>
+
+<section>
+  <h3>Available environment variables</h3>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Name</th>
+        <th scope="col">Value</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>$PREVIEW_ID</code></td><td>UUID of the preview</td></tr>
+      <tr><td><code>$PREVIEW_IMAGE</code></td><td><code>preview-&lt;id&gt;:latest</code> &mdash; required image tag</td></tr>
+      <tr><td><code>$PREVIEW_SHA</code></td><td>git commit sha</td></tr>
+      <tr><td><code>$PREVIEW_BRANCH</code></td><td>git branch (may be empty)</td></tr>
+      <tr><td><code>$PORT</code></td><td>resolved container port (default 80)</td></tr>
+    </tbody>
+  </table>
+</section>
+{{end}}

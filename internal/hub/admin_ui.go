@@ -1,13 +1,16 @@
 // 이 파일의 책임:
 //   - SSR Admin UI 핸들러 (Phase 3 §5-4, §5-5).
-//   - 4 페이지: dashboard, agents, token, previews, preview_detail (+ rebuild POST).
+//   - Phase 3 페이지: dashboard, agents, token, previews, preview_detail (+ rebuild POST).
+//   - Phase 4 페이지: agent_detail (build config 폼) + POST /admin/agents/{id}/config.
 //   - html/template 표준 라이브러리만 사용 (결정 1) + embed.FS (결정 5) + Pico CDN (결정 2/17).
 //   - 시작 시 1회 template.Must(template.ParseFS(...)) 로 fail-fast.
 //
-// 참고: docs/specs/phase-3-admin-ui-and-mvp.md §5-1, §5-4, §5-5.
+// 참고: docs/specs/phase-3-admin-ui-and-mvp.md §5-1, §5-4, §5-5,
+//       docs/specs/phase-4-agent-build-config.md §4-3, §4-4, §4-5.
 package hub
 
 import (
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -16,16 +19,24 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/lnyarl/preview/internal/hub/token"
+	"github.com/lnyarl/preview/internal/protocol"
 	"github.com/lnyarl/preview/internal/store"
 )
 
 //go:embed views/*.gohtml
 var viewsFS embed.FS
+
+// AgentConfigSender 는 Admin UI 가 폼 저장 직후 CONFIG_UPDATE 를 푸시하는 데 사용.
+// 의존 역전을 위해 인터페이스로 노출 (테스트용 mock 주입 + 순환 의존 회피).
+type AgentConfigSender interface {
+	SendAgentConfig(ctx context.Context, agentID string, cfg protocol.AgentConfigData) error
+}
 
 // AdminUIHandler 는 /admin/* SSR 핸들러 묶음.
 type AdminUIHandler struct {
@@ -35,6 +46,8 @@ type AdminUIHandler struct {
 	Logger           *slog.Logger
 	Registry         *ConnRegistry // 옵션 — online 카운트 정확도 향상.
 	AgentDownloadURL string        // 빈 값이면 소스 빌드 안내, 설정 시 다운로드 링크 표시.
+
+	jobSender AgentConfigSender // Phase 4: CONFIG_UPDATE 푸시 (옵션).
 
 	tmpls map[string]*template.Template
 	now   func() time.Time
@@ -59,12 +72,17 @@ func NewAdminUIHandler(as store.AgentStore, ps store.PreviewStore, tg *token.Gen
 		"token.gohtml",
 		"previews.gohtml",
 		"preview_detail.gohtml",
+		"agent_detail.gohtml",
 	})
 	return h
 }
 
 // SetRegistry 는 online 여부 카운트 보강용 ConnRegistry 를 주입한다 (옵션).
 func (h *AdminUIHandler) SetRegistry(reg *ConnRegistry) { h.Registry = reg }
+
+// SetJobSender 는 Phase 4: 폼 저장 시 즉시 CONFIG_UPDATE 푸시할 sender 를 주입한다.
+// nil 이면 푸시는 시도되지 않으며 PushOutcome 은 "agent offline" 으로 보고된다.
+func (h *AdminUIHandler) SetJobSender(s AgentConfigSender) { h.jobSender = s }
 
 // Register 는 mux 에 SSR 라우트를 등록한다.
 // 이미 AdminHandler/WebhookHandler 가 점유한 라우트와의 충돌을 피하기 위해
@@ -75,6 +93,11 @@ func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/agents/token", h.agentToken)
 	mux.HandleFunc("POST /admin/agents/{id}/delete", h.agentDelete)
 	mux.HandleFunc("POST /admin/previews/{id}/rebuild", h.previewRebuild)
+	// Phase 4: agent detail (build config 폼) + 저장 POST.
+	// {id} 가 "token" 등 다른 정적 prefix 와 충돌하지 않도록 GET /admin/agents/token 보다
+	// 뒤에 등록되어도 net/http mux 는 longest-prefix + literal-match 우선이므로 안전.
+	mux.HandleFunc("GET /admin/agents/{id}", h.agentDetail)
+	mux.HandleFunc("POST /admin/agents/{id}/config", h.agentConfigSave)
 }
 
 // mustParsePages 는 layout.gohtml + 각 페이지를 합쳐 별도 *template.Template 로 만든다.
@@ -578,4 +601,177 @@ func (h *AdminUIHandler) previewRebuild(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/admin/previews/"+id, http.StatusSeeOther)
 }
 
+// ---------- Agent detail (Phase 4) ----------
 
+// agentDetailView 는 GET /admin/agents/{id} 의 렌더 모델.
+type agentDetailView struct {
+	Title             string
+	AgentID           string
+	Name              string
+	Status            string
+	LabelsString      string
+	LastSeenString    string
+	CreatedString     string
+	BuildCommandsText string // raw textarea 내용. NULL/empty 일 때 빈 문자열.
+	ContainerPort     int    // 0 이면 빈 input(=기본값).
+	SavedFlash        bool
+	PushOutcome       string // "delivered" | "agent offline" | "delivery failed"
+	Error             string
+}
+
+// agentDetail 은 GET /admin/agents/{id} 핸들러.
+func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusNotFound)
+		return
+	}
+	a, err := h.AgentStore.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		h.Logger.Error("admin_ui_agent_detail_get_failed", "err", err.Error(), "agent_id", id)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	cmds, port, err := h.AgentStore.GetBuildConfig(r.Context(), id)
+	if err != nil {
+		h.Logger.Warn("admin_ui_agent_config_get_failed", "err", err.Error(), "agent_id", id)
+		cmds = []string{}
+		port = 0
+	}
+	view := agentDetailView{
+		Title:             "Agent " + a.Name,
+		AgentID:           a.ID,
+		Name:              a.Name,
+		Status:            a.Status,
+		LabelsString:      labelsToString(a.Labels),
+		CreatedString:     a.CreatedAt.UTC().Format(time.RFC3339),
+		BuildCommandsText: strings.Join(cmds, "\n"),
+		ContainerPort:     port,
+	}
+	if a.LastSeenAt != nil {
+		view.LastSeenString = a.LastSeenAt.UTC().Format(time.RFC3339)
+	}
+	// 플래시 메시지 (?msg=).
+	switch r.URL.Query().Get("msg") {
+	case "saved":
+		view.SavedFlash = true
+		view.PushOutcome = "delivered"
+	case "saved_offline":
+		view.SavedFlash = true
+		view.PushOutcome = "skipped (agent offline)"
+	case "saved_push_failed":
+		view.SavedFlash = true
+		view.PushOutcome = "delivery failed"
+	}
+	h.renderHTML(w, http.StatusOK, "agent_detail.gohtml", view)
+}
+
+// agentConfigSave 는 POST /admin/agents/{id}/config 핸들러 (Phase 4 §4-6).
+//
+//  1. 폼 파싱: build_commands raw text + container_port int.
+//  2. Normalize: port 1..65535 외 / 비숫자 / 빈 값 → 0 (sentinel).
+//  3. SaveBuildConfig 호출 (rawCommands "" → NULL, port 0 → NULL).
+//  4. jobSender 가 있고 agent 가 connected 이면 CONFIG_UPDATE 푸시.
+//  5. 303 redirect 로 detail 페이지에 ?msg=... 첨부.
+func (h *AdminUIHandler) agentConfigSave(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusNotFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	// agent 존재 확인 (404 우선).
+	if _, err := h.AgentStore.GetByID(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "agent not found", http.StatusNotFound)
+			return
+		}
+		h.Logger.Error("admin_ui_agent_config_save_get_failed", "err", err.Error(), "agent_id", id)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	rawCommands := r.FormValue("build_commands")
+	port := normalizeContainerPort(r.FormValue("container_port"))
+
+	if err := h.AgentStore.SaveBuildConfig(r.Context(), id, rawCommands, port); err != nil {
+		h.Logger.Error("admin_ui_agent_config_save_failed", "err", err.Error(), "agent_id", id)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	h.Logger.Info("admin_ui_agent_config_saved",
+		"agent_id", id, "raw_commands_len", len(rawCommands), "port", port)
+
+	// 와이어 페이로드 구성: split + trim + drop empty.
+	cmdLines := splitAndCleanLines(rawCommands)
+	cfg := protocol.AgentConfigData{BuildCommands: cmdLines, ContainerPort: port}
+
+	msg := "saved"
+	if h.jobSender == nil {
+		msg = "saved_offline"
+	} else {
+		pushCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		err := h.jobSender.SendAgentConfig(pushCtx, id, cfg)
+		cancel()
+		switch {
+		case err == nil:
+			h.Logger.Info("admin_ui_agent_config_push_delivered", "agent_id", id)
+		case strings.Contains(err.Error(), "not connected"):
+			msg = "saved_offline"
+			h.Logger.Info("admin_ui_agent_config_push_skipped",
+				"agent_id", id, "reason", "agent_not_connected")
+		default:
+			msg = "saved_push_failed"
+			h.Logger.Warn("admin_ui_agent_config_push_failed",
+				"agent_id", id, "err", err.Error())
+		}
+	}
+
+	q := url.Values{}
+	q.Set("msg", msg)
+	http.Redirect(w, r, "/admin/agents/"+id+"?"+q.Encode(), http.StatusSeeOther)
+}
+
+// normalizeContainerPort 는 폼 입력을 [1, 65535] 범위 정수로 정규화.
+// 범위 밖 / 빈 값 / 비숫자 → 0 (sentinel = "기본값 적용").
+// Phase 4 결정 12.
+func normalizeContainerPort(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	if n < 1 || n > 65535 {
+		return 0
+	}
+	return n
+}
+
+// splitAndCleanLines 는 textarea 내용을 \r?\n 기준 split → trim → drop empty.
+// Phase 4 결정 13. SaveBuildConfig 가 raw 그대로 저장하므로,
+// 이 함수의 결과는 wire 페이로드 구성 시점에서만 사용된다.
+func splitAndCleanLines(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	normalized := strings.ReplaceAll(s, "\r\n", "\n")
+	parts := strings.Split(normalized, "\n")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}

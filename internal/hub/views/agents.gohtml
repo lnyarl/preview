@@ -25,13 +25,14 @@
     <tbody>
     {{range .Agents}}
       <tr>
-        <td>{{.Name}}</td>
+        <td><a href="/admin/agents/{{.ID}}">{{.Name}}</a></td>
         <td>{{.Status}}</td>
         <td>{{.LabelsString}}</td>
         <td>{{.RunningCount}}</td>
         <td>{{.LastSeenString}}</td>
         <td>
-          <form method="POST" action="/admin/agents/{{.ID}}/delete">
+          <a href="/admin/agents/{{.ID}}" role="button" class="outline">Configure</a>
+          <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline">
             <button type="submit" class="secondary outline">Delete</button>
           </form>
         </td>
