@@ -48,6 +48,7 @@ type AdminUIHandler struct {
 	AgentDownloadURL string        // 빈 값이면 소스 빌드 안내, 설정 시 다운로드 링크 표시.
 
 	jobSender AgentConfigSender // Phase 4: CONFIG_UPDATE 푸시 (옵션).
+	cfg       Config            // 설정 페이지 표시용 (웹훅 시크릿 등).
 
 	tmpls map[string]*template.Template
 	now   func() time.Time
@@ -73,6 +74,7 @@ func NewAdminUIHandler(as store.AgentStore, ps store.PreviewStore, tg *token.Gen
 		"previews.gohtml",
 		"preview_detail.gohtml",
 		"agent_detail.gohtml",
+		"settings.gohtml",
 	})
 	return h
 }
@@ -84,12 +86,16 @@ func (h *AdminUIHandler) SetRegistry(reg *ConnRegistry) { h.Registry = reg }
 // nil 이면 푸시는 시도되지 않으며 PushOutcome 은 "agent offline" 으로 보고된다.
 func (h *AdminUIHandler) SetJobSender(s AgentConfigSender) { h.jobSender = s }
 
+// SetConfig 는 설정 페이지 표시에 필요한 Hub Config 를 주입한다.
+func (h *AdminUIHandler) SetConfig(cfg Config) { h.cfg = cfg }
+
 // Register 는 mux 에 SSR 라우트를 등록한다.
 // 이미 AdminHandler/WebhookHandler 가 점유한 라우트와의 충돌을 피하기 위해
 // 신규 SSR 라우트만 등록 + 기존 GET/POST /admin/agents 와 /admin/previews* 는
 // AdminHandler / WebhookHandler 가 Accept-header 분기로 SSR 응답 가능하게 처리.
 func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin", h.dashboard)
+	mux.HandleFunc("GET /admin/settings", h.settings)
 	mux.HandleFunc("GET /admin/agents/token", h.agentToken)
 	mux.HandleFunc("POST /admin/agents/{id}/delete", h.agentDelete)
 	mux.HandleFunc("POST /admin/previews/{id}/rebuild", h.previewRebuild)
@@ -764,4 +770,29 @@ func splitAndCleanLines(s string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+type settingsView struct {
+	Title             string
+	WebhookURL        string
+	WebhookSecret     string
+	PreviewBaseDomain string
+	AgentDownloadURL  string
+}
+
+// settings 는 GET /admin/settings — Hub 설정 정보(웹훅 URL, 시크릿 등) 표시.
+func (h *AdminUIHandler) settings(w http.ResponseWriter, r *http.Request) {
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := r.Host
+	view := settingsView{
+		Title:             "Settings",
+		WebhookURL:        scheme + "://" + host + "/webhooks/github",
+		WebhookSecret:     h.cfg.WebhookSecret,
+		PreviewBaseDomain: h.cfg.PreviewBaseDomain,
+		AgentDownloadURL:  h.cfg.AgentDownloadURL,
+	}
+	h.renderHTML(w, http.StatusOK, "settings.gohtml", view)
 }

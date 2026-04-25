@@ -1,0 +1,59 @@
+{{define "content"}}
+<hgroup>
+  <h1>Settings</h1>
+  <h2>Hub configuration and GitHub integration</h2>
+</hgroup>
+
+<section>
+  <h3>GitHub Webhook</h3>
+  <p>GitHub 리포지토리 Settings → Webhooks → Add webhook 에서 아래 값을 입력하세요.</p>
+  <dl>
+    <dt>Payload URL</dt>
+    <dd>
+      <div class="code-wrap" style="display:flex;align-items:center;gap:0.5rem">
+        <code id="webhook-url" style="flex:1;padding:0.4rem 0.6rem;background:var(--pico-code-background,#f4f4f4);border-radius:4px">{{.WebhookURL}}</code>
+        <button class="outline" style="margin:0;padding:0.3rem 0.7rem;font-size:0.85rem" onclick="navigator.clipboard.writeText(document.getElementById('webhook-url').textContent)">Copy</button>
+      </div>
+    </dd>
+    <dt style="margin-top:1rem">Content type</dt>
+    <dd><code>application/json</code></dd>
+    <dt style="margin-top:1rem">Secret</dt>
+    <dd>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <code id="webhook-secret" style="flex:1;padding:0.4rem 0.6rem;background:var(--pico-code-background,#f4f4f4);border-radius:4px;letter-spacing:0.1em">{{range .WebhookSecret}}•{{end}}</code>
+        <button class="outline" id="reveal-btn" style="margin:0;padding:0.3rem 0.7rem;font-size:0.85rem"
+          onclick="toggleSecret('{{.WebhookSecret}}')">Reveal</button>
+      </div>
+    </dd>
+    <dt style="margin-top:1rem">Which events?</dt>
+    <dd><em>Let me select individual events</em> → <strong>Pull requests</strong> 만 체크</dd>
+  </dl>
+</section>
+
+<section style="margin-top:2rem">
+  <h3>Hub Configuration</h3>
+  <dl>
+    <dt>Preview Base Domain</dt>
+    <dd><code>{{if .PreviewBaseDomain}}{{.PreviewBaseDomain}}{{else}}<em>not set</em>{{end}}</code></dd>
+    <dt style="margin-top:0.75rem">Agent Download URL</dt>
+    <dd><code>{{if .AgentDownloadURL}}{{.AgentDownloadURL}}{{else}}<em>not set (using source build)</em>{{end}}</code></dd>
+  </dl>
+</section>
+
+<script>
+var _revealed = false;
+function toggleSecret(secret) {
+  var el = document.getElementById('webhook-secret');
+  var btn = document.getElementById('reveal-btn');
+  if (_revealed) {
+    el.textContent = secret.split('').map(function(){return '•'}).join('');
+    btn.textContent = 'Reveal';
+    _revealed = false;
+  } else {
+    el.textContent = secret;
+    btn.textContent = 'Hide';
+    _revealed = true;
+  }
+}
+</script>
+{{end}}
