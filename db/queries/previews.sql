@@ -75,3 +75,9 @@ SELECT * FROM previews
 WHERE assigned_agent_id = ?
   AND status IN (sqlc.slice('statuses'))
 ORDER BY updated_at ASC;
+
+-- name: ListPreviewEvents :many
+SELECT * FROM preview_events
+WHERE preview_id = ?
+ORDER BY created_at ASC, id ASC
+LIMIT ? OFFSET ?;

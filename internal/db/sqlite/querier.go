@@ -22,6 +22,7 @@ type Querier interface {
 	ListAgents(ctx context.Context) ([]Agent, error)
 	ListAllPreviews(ctx context.Context) ([]Preview, error)
 	ListByAgent(ctx context.Context, arg ListByAgentParams) ([]Preview, error)
+	ListPreviewEvents(ctx context.Context, arg ListPreviewEventsParams) ([]PreviewEvent, error)
 	ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error)
 	ListRunningPreviewsByAgent(ctx context.Context, assignedAgentID sql.NullString) ([]Preview, error)
 	ListStaleAssignedPreviews(ctx context.Context, updatedAt string) ([]Preview, error)

@@ -284,6 +284,49 @@ func (q *Queries) ListByAgent(ctx context.Context, arg ListByAgentParams) ([]Pre
 	return items, nil
 }
 
+const listPreviewEvents = `-- name: ListPreviewEvents :many
+SELECT id, preview_id, from_status, to_status, message, created_at FROM preview_events
+WHERE preview_id = ?
+ORDER BY created_at ASC, id ASC
+LIMIT ? OFFSET ?
+`
+
+type ListPreviewEventsParams struct {
+	PreviewID string `json:"preview_id"`
+	Limit     int64  `json:"limit"`
+	Offset    int64  `json:"offset"`
+}
+
+func (q *Queries) ListPreviewEvents(ctx context.Context, arg ListPreviewEventsParams) ([]PreviewEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listPreviewEvents, arg.PreviewID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PreviewEvent{}
+	for rows.Next() {
+		var i PreviewEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.PreviewID,
+			&i.FromStatus,
+			&i.ToStatus,
+			&i.Message,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueuedPreviewsForLabels = `-- name: ListQueuedPreviewsForLabels :many
 SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50
 `
