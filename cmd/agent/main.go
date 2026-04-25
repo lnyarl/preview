@@ -2,9 +2,12 @@
 //
 // Phase 1: "start" 서브커맨드로 Hub 에 outbound WebSocket 연결.
 // Phase 3: graceful shutdown — SIGTERM 시 runner.Pause + in-flight build drain (30s).
+// Phase 5: ReadySender + MaxJobs wiring — 다중 동시 build 슬롯 제어.
 //
 // 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-9,
-//       docs/specs/phase-3-admin-ui-and-mvp.md §5-13.
+//
+//	docs/specs/phase-3-admin-ui-and-mvp.md §5-13,
+//	docs/specs/phase-5-multi-job.md §4-2.
 package main
 
 import (
@@ -88,6 +91,10 @@ func runStart(args []string) error {
 	holder := agent.NewHolder()
 	c.SetHolder(holder)
 	runner.SetHolder(holder)
+
+	// Phase 5: 다중 Job 슬롯 + READY 재전송 의존 주입.
+	runner.SetReadySender(c)
+	runner.SetMaxJobs(cfg.MaxJobs)
 
 	// Phase 3: orphan container restore (결정 11 / §4-7-1).
 	if _, rerr := agent.RestoreOrphans(ctx, docker, runner, cfg.AdvertiseHost, logger); rerr != nil {
