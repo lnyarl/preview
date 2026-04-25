@@ -20,7 +20,14 @@
 set -euo pipefail
 
 # ── Go 바이너리 탐색 ────────────────────────────────────────────────────────
-# bash scripts/dev.sh 으로 실행 시 PATH 가 인터랙티브 셸과 달라 go 를 못 찾을 수 있음.
+# 비인터랙티브 bash 는 ~/.bash_profile 을 로드하지 않아 Go 경로가 없을 수 있음.
+# 1) 프로필 소스
+# shellcheck disable=SC1090
+[ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" 2>/dev/null || true
+# shellcheck disable=SC1090
+[ -f "$HOME/.profile" ]      && source "$HOME/.profile"      2>/dev/null || true
+
+# 2) 고정 경로 후보
 if ! command -v go >/dev/null 2>&1; then
   for _candidate in \
     "$HOME/go/bin/go" \
@@ -35,11 +42,23 @@ if ! command -v go >/dev/null 2>&1; then
   done
 fi
 
+# 3) PowerShell 로 Windows PATH 에서 탐색 (Git Bash on Windows 전용)
+if ! command -v go >/dev/null 2>&1 && command -v powershell.exe >/dev/null 2>&1; then
+  _GO_WIN=$(powershell.exe -NoProfile -Command \
+    "(Get-Command go -ErrorAction SilentlyContinue).Source" 2>/dev/null \
+    | tr -d '\r\n' || true)
+  if [ -n "$_GO_WIN" ]; then
+    # Windows 경로(C:\...) → Unix 경로(/c/...)
+    _GO_UNIX=$(cygpath -u "$_GO_WIN" 2>/dev/null || echo "$_GO_WIN")
+    export PATH="$(dirname "$_GO_UNIX"):$PATH"
+  fi
+fi
+
 if ! command -v go >/dev/null 2>&1; then
   echo "ERROR: 'go' 명령어를 찾을 수 없습니다."
   echo "  Go 설치: https://go.dev/dl/"
-  echo "  또는 터미널에서 직접 실행: AGENT_REPO_URL=... go run ./scripts/dev.go (미지원)"
-  echo "  임시 해결책: PATH=\$(go env GOROOT)/bin:\$PATH bash scripts/dev.sh"
+  echo "  또는 Go bin 경로를 직접 지정해서 실행:"
+  echo "    PATH=/c/Program\ Files/Go/bin:\$PATH bash scripts/dev.sh"
   exit 1
 fi
 
