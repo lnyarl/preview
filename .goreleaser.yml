@@ -1,0 +1,58 @@
+version: 2
+
+project_name: preview
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: hub
+    binary: hub
+    main: ./cmd/hub
+    env:
+      - CGO_ENABLED=0    # modernc.org/sqlite 는 pure Go — 크로스 컴파일 가능
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64    # Windows ARM64 미지원
+    ldflags:
+      - -s -w            # 심볼/디버그 제거 → 바이너리 크기 축소
+
+  - id: agent
+    binary: agent
+    main: ./cmd/agent
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: hub-bin
+    ids: [hub]
+    format: binary
+    name_template: "hub-{{ .Os }}-{{ .Arch }}"
+
+  - id: agent-bin
+    ids: [agent]
+    format: binary
+    name_template: "agent-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^chore:"
+      - "^docs:"
+      - "^test:"
+      - "Merge pull request"
