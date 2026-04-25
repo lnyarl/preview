@@ -22,11 +22,14 @@ type Server struct {
 }
 
 // NewServer 는 구성 요소를 조립해 Server 를 반환한다.
-// admin 및 ws 두 핸들러가 공유 레지스트리를 사용한다.
-func NewServer(cfg Config, admin *AdminHandler, wsh *WSHandler, reg *ConnRegistry, logger *slog.Logger) *Server {
+// admin/ws/webhook 핸들러가 공유 레지스트리와 mux 를 사용한다.
+func NewServer(cfg Config, admin *AdminHandler, wsh *WSHandler, webhook *WebhookHandler, reg *ConnRegistry, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 	admin.Register(mux)
 	wsh.Register(mux)
+	if webhook != nil {
+		webhook.Register(mux)
+	}
 	return &Server{
 		cfg:      cfg,
 		registry: reg,
