@@ -2,6 +2,7 @@
 //   - DockerClient 인터페이스: SDK 의존을 격리해 단위 테스트에서 fake 주입 가능 (결정 6).
 //   - Phase 2 범위: ImageBuild / ContainerCreate / ContainerStart / ContainerStop /
 //     ContainerRemove / Ping. ContainerInspect 는 build 결과 ExposedPort 추출용.
+//   - Phase 6 추가: NetworkInspect / NetworkCreate (traefik.go 사용).
 //   - SDK 어댑터(NewSDKDockerClient) 는 cmd/agent 가 wire 한다 (NF-Depguard-2:
 //     internal/agent 패키지는 docker/docker/client 직접 import 금지, cmd/agent 만 허용).
 //
@@ -10,8 +11,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 )
+
+// ErrDockerNotFound 는 NetworkInspect / ContainerInspect 에서 리소스가 없을 때 반환된다.
+// SDK 어댑터가 Docker "not found" 에러를 이 sentinel 로 감싼다.
+var ErrDockerNotFound = errors.New("docker: not found")
 
 // BuildOptions 는 ImageBuild 호출에 필요한 최소 옵션.
 type BuildOptions struct {
@@ -20,13 +26,16 @@ type BuildOptions struct {
 }
 
 // CreateOptions 는 ContainerCreate 호출에 필요한 옵션.
-// PortBindings 는 host_port → container_port 매핑.
 type CreateOptions struct {
 	Image       string
+	Name        string            // Phase 6: 컨테이너 이름 (예: "preview-traefik")
 	Labels      map[string]string
-	HostPort    int // 외부 노출 포트
-	ExposedPort int // 컨테이너 내부 포트
+	HostPort    int               // 외부 노출 포트
+	ExposedPort int               // 컨테이너 내부 포트
 	Env         []string
+	Networks    []string          // Phase 6: 연결할 Docker 네트워크 이름 목록
+	Volumes     []string          // Phase 6: bind mounts "host:container[:opts]"
+	Cmd         []string          // Phase 6: 컨테이너 명령 인자 (entrypoint 오버라이드)
 }
 
 // RemoveOptions 는 ContainerRemove 옵션.
@@ -35,16 +44,28 @@ type RemoveOptions struct {
 }
 
 // ContainerSummary 는 ContainerList 결과의 하나의 row.
-// 라벨만 사용하므로 좁은 표면.
 type ContainerSummary struct {
 	ID     string
 	Labels map[string]string
 }
 
 // ContainerInspectResult 는 ContainerInspect 결과의 좁은 dto.
-// HostPort 는 컨테이너의 ExposedPort=80 (Phase 2 단일 포트 가정) 에 바인딩된 host port.
 type ContainerInspectResult struct {
 	HostPort int
+	Labels   map[string]string // Phase 6: spec hash 비교용 (traefik)
+	Status   string            // Phase 6: "running", "exited", etc.
+}
+
+// NetworkInspectResult 는 NetworkInspect 결과의 좁은 dto.
+type NetworkInspectResult struct {
+	ID     string
+	Driver string // "bridge", "overlay", ...
+}
+
+// NetworkCreateOptions 는 NetworkCreate 호출 옵션.
+type NetworkCreateOptions struct {
+	Driver     string // "bridge"
+	Attachable bool   // --attachable
 }
 
 // DockerClient 는 Agent runner 가 사용하는 Docker SDK 의 좁은 인터페이스.
@@ -69,9 +90,16 @@ type DockerClient interface {
 	Ping(ctx context.Context) error
 
 	// ContainerList 는 라벨 필터 (key→value) 매칭 컨테이너 목록을 반환한다.
-	// Phase 3 Agent 재기동 시 orphan 복원 (결정 11 / §4-7-1).
 	ContainerList(ctx context.Context, filters map[string]string) ([]ContainerSummary, error)
 
-	// ContainerInspect 는 컨테이너 메타를 반환한다 — 본 Phase 는 HostPort 만 노출.
+	// ContainerInspect 는 컨테이너 메타를 반환한다.
+	// 컨테이너가 없으면 errors.Is(err, ErrDockerNotFound).
 	ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error)
+
+	// NetworkInspect 는 네트워크 메타를 반환한다.
+	// 네트워크가 없으면 errors.Is(err, ErrDockerNotFound).
+	NetworkInspect(ctx context.Context, name string) (NetworkInspectResult, error)
+
+	// NetworkCreate 는 Docker 네트워크를 생성한다.
+	NetworkCreate(ctx context.Context, name string, opts NetworkCreateOptions) error
 }

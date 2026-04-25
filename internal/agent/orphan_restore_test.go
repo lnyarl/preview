@@ -55,6 +55,12 @@ func (f *orphanFakeDocker) ContainerInspect(_ context.Context, id string) (Conta
 	}
 	return ContainerInspectResult{}, nil
 }
+func (f *orphanFakeDocker) NetworkInspect(_ context.Context, _ string) (NetworkInspectResult, error) {
+	return NetworkInspectResult{}, ErrDockerNotFound
+}
+func (f *orphanFakeDocker) NetworkCreate(_ context.Context, _ string, _ NetworkCreateOptions) error {
+	return nil
+}
 
 func TestOrphanRestore(t *testing.T) {
 	docker := &orphanFakeDocker{

@@ -1,8 +1,9 @@
 // 이 파일의 책임:
 //   - github.com/docker/docker/client SDK 어댑터를 internal/agent.DockerClient
 //     인터페이스에 매핑한다 (NF-Depguard-2: SDK 직접 import 는 cmd/agent 만 허용).
-//   - Phase 2 범위의 6 메서드만 구현 — ImageBuild, ContainerCreate, ContainerStart,
-//     ContainerStop, ContainerRemove, Ping.
+//   - Phase 2 범위: ImageBuild, ContainerCreate, ContainerStart, ContainerStop,
+//     ContainerRemove, Ping, ContainerList, ContainerInspect.
+//   - Phase 6 추가: NetworkInspect, NetworkCreate + CreateOptions 확장 필드 처리.
 //
 // 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6.
 package main
@@ -18,6 +19,7 @@ import (
 	"strconv"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
 	dockerfilters "github.com/docker/docker/api/types/filters"
@@ -77,16 +79,25 @@ func (s *sdkDockerClient) ContainerCreate(ctx context.Context, opts agent.Create
 		PortBindings: nat.PortMap{
 			exposedKey: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: strconv.Itoa(opts.HostPort)}},
 		},
+		Binds: opts.Volumes, // Phase 6: bind mounts
 	}
 	cfg := &container.Config{
 		Image:  opts.Image,
 		Labels: opts.Labels,
 		Env:    opts.Env,
+		Cmd:    opts.Cmd, // Phase 6: command args
 		ExposedPorts: nat.PortSet{
 			exposedKey: struct{}{},
 		},
 	}
-	resp, err := s.cli.ContainerCreate(ctx, cfg, hostConf, &network.NetworkingConfig{}, nil, "")
+	// Phase 6: connect to specified networks at creation time (first one via NetworkingConfig).
+	netCfg := &network.NetworkingConfig{}
+	if len(opts.Networks) > 0 {
+		netCfg.EndpointsConfig = map[string]*network.EndpointSettings{
+			opts.Networks[0]: {},
+		}
+	}
+	resp, err := s.cli.ContainerCreate(ctx, cfg, hostConf, netCfg, nil, opts.Name)
 	if err != nil {
 		return "", err
 	}
@@ -129,33 +140,65 @@ func (s *sdkDockerClient) ContainerList(ctx context.Context, filters map[string]
 	return out, nil
 }
 
-// ContainerInspect 는 컨테이너의 메타를 조회하고 HostPort 만 추출한다.
-// ExposedPort 80/tcp 의 host port 가 첫 매칭 — 단일 포트 가정 (Phase 2 결정 8).
+// ContainerInspect 는 컨테이너의 메타를 조회한다.
+// 컨테이너가 없으면 agent.ErrDockerNotFound 를 wrapping 해 반환.
 func (s *sdkDockerClient) ContainerInspect(ctx context.Context, id string) (agent.ContainerInspectResult, error) {
 	insp, err := s.cli.ContainerInspect(ctx, id)
 	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return agent.ContainerInspectResult{}, fmt.Errorf("%w: container %s", agent.ErrDockerNotFound, id)
+		}
 		return agent.ContainerInspectResult{}, err
+	}
+	res := agent.ContainerInspectResult{}
+	if insp.Config != nil {
+		res.Labels = insp.Config.Labels
+	}
+	if insp.State != nil {
+		res.Status = insp.State.Status
 	}
 	if insp.NetworkSettings != nil {
 		for portKey, bindings := range insp.NetworkSettings.Ports {
 			if portKey == "80/tcp" || string(portKey) == "80/tcp" {
 				if len(bindings) > 0 {
 					if n, perr := strconv.Atoi(bindings[0].HostPort); perr == nil {
-						return agent.ContainerInspectResult{HostPort: n}, nil
+						res.HostPort = n
+						return res, nil
 					}
 				}
 			}
 		}
-		// 포트 키가 80/tcp 아닐 수 있으므로 첫 번째 binding 도 fallback.
 		for _, bindings := range insp.NetworkSettings.Ports {
 			if len(bindings) > 0 {
 				if n, perr := strconv.Atoi(bindings[0].HostPort); perr == nil {
-					return agent.ContainerInspectResult{HostPort: n}, nil
+					res.HostPort = n
+					return res, nil
 				}
 			}
 		}
 	}
-	return agent.ContainerInspectResult{}, nil
+	return res, nil
+}
+
+// NetworkInspect 는 네트워크 메타를 조회한다. 없으면 agent.ErrDockerNotFound 를 반환.
+func (s *sdkDockerClient) NetworkInspect(ctx context.Context, name string) (agent.NetworkInspectResult, error) {
+	nr, err := s.cli.NetworkInspect(ctx, name, network.InspectOptions{})
+	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return agent.NetworkInspectResult{}, fmt.Errorf("%w: network %s", agent.ErrDockerNotFound, name)
+		}
+		return agent.NetworkInspectResult{}, err
+	}
+	return agent.NetworkInspectResult{ID: nr.ID, Driver: nr.Driver}, nil
+}
+
+// NetworkCreate 는 Docker 네트워크를 생성한다.
+func (s *sdkDockerClient) NetworkCreate(ctx context.Context, name string, opts agent.NetworkCreateOptions) error {
+	_, err := s.cli.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver:     opts.Driver,
+		Attachable: opts.Attachable,
+	})
+	return err
 }
 
 // dockertypesImageBuildOptions 는 SDK 의 build option 객체를 만든다 (별도 함수로 격리).

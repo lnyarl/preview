@@ -122,9 +122,16 @@ func (f *fakeDockerClient) ContainerInspect(_ context.Context, id string) (agent
 	defer f.mu.Unlock()
 	c, ok := f.containers[id]
 	if !ok {
-		return agent.ContainerInspectResult{}, fmt.Errorf("fakeDocker: container %s not found", id)
+		return agent.ContainerInspectResult{}, fmt.Errorf("%w: container %s", agent.ErrDockerNotFound, id)
 	}
 	return agent.ContainerInspectResult{HostPort: c.opts.HostPort}, nil
+}
+
+func (f *fakeDockerClient) NetworkInspect(_ context.Context, _ string) (agent.NetworkInspectResult, error) {
+	return agent.NetworkInspectResult{}, agent.ErrDockerNotFound
+}
+func (f *fakeDockerClient) NetworkCreate(_ context.Context, _ string, _ agent.NetworkCreateOptions) error {
+	return nil
 }
 
 // ---------- fake CmdRunner ----------
