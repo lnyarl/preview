@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os/signal"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	sqlitestore "github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
 	"github.com/lnyarl/preview/internal/hub/token"
+	"github.com/lnyarl/preview/internal/store"
 )
 
 // runDaemon 은 Hub HTTP+WS 데몬을 기동한다.
@@ -84,6 +86,15 @@ func runDaemon(args []string) error {
 	logger.Info("startup_bulk_assigned_reset", "reset_count", resetAssigned)
 
 	tg := token.NewGenerator(cfg.BcryptCost)
+
+	// DEV_AGENT_TOKEN 이 설정되어 있으면 "dev-agent" 를 자동 등록한다.
+	// 이미 존재하면 무시 (재시작 시 중복 등록 방지).
+	if cfg.DevAgentToken != "" {
+		if err := provisionDevAgent(ctx, agentStore, tg, cfg.DevAgentToken, logger); err != nil {
+			logger.Warn("dev_agent_provision_failed", "err", err.Error())
+		}
+	}
+
 	reg := hub.NewConnRegistry()
 	admin := hub.NewAdminHandler(agentStore, tg, logger)
 	ws := hub.NewWSHandler(agentStore, reg, logger)
@@ -134,4 +145,29 @@ func runDaemon(args []string) error {
 
 	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, pm, adminUI)
 	return srv.Run(ctx)
+}
+
+// provisionDevAgent 는 DEV_AGENT_TOKEN 이 설정된 경우 "dev-agent" 를 자동 등록한다.
+// 이미 같은 이름의 agent 가 존재하면 아무것도 하지 않는다.
+func provisionDevAgent(ctx context.Context, s store.AgentStore, tg *token.Generator, rawToken string, logger *slog.Logger) error {
+	if _, err := s.GetByName(ctx, "dev-agent"); err == nil {
+		logger.Info("dev_agent_already_exists")
+		return nil
+	}
+	hash, err := tg.Hash(rawToken)
+	if err != nil {
+		return fmt.Errorf("hash dev token: %w", err)
+	}
+	if err := s.Create(ctx, store.Agent{
+		ID:        "dev-agent-fixed-id-000000000001",
+		Name:      "dev-agent",
+		TokenHash: hash,
+		Labels:    map[string]string{},
+		Status:    "offline",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("create dev agent: %w", err)
+	}
+	logger.Info("dev_agent_provisioned", "token", rawToken)
+	return nil
 }

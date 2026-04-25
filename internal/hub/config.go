@@ -31,6 +31,7 @@ type Config struct {
 	ReconcileInterval   time.Duration // reconciler 주기 (기본 60s).
 	StaleAssignedAfter time.Duration // assigned 임계 (기본 5m).
 	AdminPassword     string        // Phase 3: /admin/* Basic Auth 비밀번호. 빈 값 = 인증 disable + WARN.
+	DevAgentToken     string        // 설정 시 시작 시 "dev-agent" 자동 등록 (개발 전용).
 }
 
 // DefaultConfig 는 env 를 읽어 기본값이 채워진 Config 를 만든다.
@@ -47,6 +48,7 @@ func DefaultConfig() Config {
 		ReconcileInterval:  envDuration("RECONCILE_INTERVAL", 60*time.Second),
 		StaleAssignedAfter: envDuration("STALE_ASSIGNED_AFTER", 5*time.Minute),
 		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
+		DevAgentToken:      os.Getenv("DEV_AGENT_TOKEN"),
 	}
 }
 
