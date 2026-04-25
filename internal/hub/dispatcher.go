@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/lnyarl/preview/internal/protocol"
@@ -40,7 +41,15 @@ type Dispatcher struct {
 	ResolveRepo  RepoURLResolver
 	Logger       *slog.Logger
 	now          func() time.Time
+	paused       atomic.Bool // Phase 3: Pause() 호출 후 신규 OnReady 즉시 no-op.
 }
+
+// Pause 는 graceful shutdown 시 신규 OnReady 를 no-op 으로 만든다 (결정 10).
+// 진행 중인 OnReady 는 끝까지 진행. atomic.Bool 로 lock 무료.
+func (d *Dispatcher) Pause() { d.paused.Store(true) }
+
+// Paused 는 현재 paused 여부를 반환한다 (테스트/진단용).
+func (d *Dispatcher) Paused() bool { return d.paused.Load() }
 
 // NewDispatcher 는 Dispatcher 를 조립한다. resolve 가 nil 이면 repo_full_name
 // 을 그대로 RepoURL 로 echo (placeholder, Step 2 의 단위 테스트 편의).
@@ -61,7 +70,12 @@ func NewDispatcher(as store.AgentStore, ps store.PreviewStore, sender JobSender,
 // OnReady 는 READY 메시지 1건 처리 진입점.
 // 후보 0 / 매칭 0 / Claim 실패(ErrNotFound) 모두 nil 반환 (no-op).
 // Sender.SendJobAssign 실패는 에러로 반환되며 호출자(WS handler) 가 로그.
+//
+// Phase 3: Pause() 후 호출되면 즉시 nil 반환 (결정 10).
 func (d *Dispatcher) OnReady(ctx context.Context, agentID string) error {
+	if d.paused.Load() {
+		return nil
+	}
 	agent, err := d.AgentStore.GetByID(ctx, agentID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
