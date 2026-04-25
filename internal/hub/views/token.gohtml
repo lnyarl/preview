@@ -1,21 +1,170 @@
 {{define "content"}}
 <hgroup>
-  <h1>Agent created: {{.Name}}</h1>
-  <h2>One-time token display</h2>
+  <h1>Agent <strong>{{.Name}}</strong> 등록 완료</h1>
+  <p>아래 단계를 따라 Agent를 실행하세요.</p>
 </hgroup>
 
-<article role="alert">
-  <strong>Save this token now — it will not be shown again.</strong>
-  <p>This page is the only chance to copy the agent token. If you lose it,
-  delete the agent and create a new one.</p>
+{{/* ── 토큰 ── */}}
+<article>
+  <header>⚠️ 토큰은 지금만 표시됩니다</header>
+  <p>이 페이지를 벗어나면 다시 볼 수 없습니다. 토큰을 잃어버리면 Agent를 삭제하고 다시 생성해야 합니다.</p>
+  <label for="token-input"><strong>Token</strong></label>
+  <input id="token-input" type="text" readonly value="{{.Token}}"
+         onclick="this.select()" style="font-family:monospace;cursor:pointer"
+         title="클릭해서 선택 후 복사">
 </article>
 
-<section>
-  <label for="token">Token</label>
-  <input id="token" type="text" readonly value="{{.Token}}">
-</section>
+<hr>
 
-<p>
-  <a href="/admin/agents" role="button">Back to Agents</a>
+{{/* ── Step 1: 바이너리 준비 ── */}}
+<details open>
+  <summary><strong>Step 1</strong> — Agent 바이너리 빌드</summary>
+  <p>Agent를 실행할 머신에서 아래 명령을 실행합니다. Go 1.22+와 Docker가 설치되어 있어야 합니다.</p>
+
+  <details>
+    <summary>Linux / macOS</summary>
+<pre><code>git clone https://github.com/your-org/preview.git
+cd preview
+go build -o agent ./cmd/agent</code></pre>
+  </details>
+
+  <details>
+    <summary>Windows (PowerShell)</summary>
+<pre><code>git clone https://github.com/your-org/preview.git
+cd preview
+go build -o agent.exe ./cmd/agent</code></pre>
+  </details>
+</details>
+
+<hr>
+
+{{/* ── Step 2: 저장소 접근 설정 ── */}}
+<details open>
+  <summary><strong>Step 2</strong> — 빌드할 저장소 접근 설정 (GitHub)</summary>
+  <p>Agent는 PR이 열릴 때마다 지정한 저장소를 <code>git clone</code>합니다.<br>
+  <strong>Public 저장소</strong>라면 별도 설정 없이 URL만 지정하면 됩니다.<br>
+  <strong>Private 저장소</strong>라면 아래 중 하나를 선택하세요.</p>
+
+  <details>
+    <summary>방법 A — URL에 PAT 포함 (간단)</summary>
+    <p>GitHub Personal Access Token을 URL에 직접 포함합니다.</p>
+    <p><strong>PAT 발급 (최소 권한):</strong></p>
+    <ol>
+      <li>GitHub → Settings → Developer settings → <strong>Fine-grained tokens</strong> → Generate new token</li>
+      <li><strong>Repository access</strong>: Only select repositories → 빌드할 저장소 선택</li>
+      <li><strong>Permissions → Repository permissions → Contents</strong>: <code>Read-only</code></li>
+      <li>나머지는 모두 No access — Generate token</li>
+    </ol>
+    <p>발급받은 토큰을 아래 형식으로 저장소 URL에 포함하세요:</p>
+<pre><code>https://&lt;GitHub 사용자명&gt;:&lt;PAT 토큰&gt;@github.com/owner/repo.git
+
+# 예시
+https://lnyarl:ghp_XXXXXXXXXXXX@github.com/lnyarl/myapp.git</code></pre>
+    <p>이 URL을 Step 3의 <code>--repo-url</code>에 사용합니다.</p>
+  </details>
+
+  <details>
+    <summary>방법 B — SSH 키 사용</summary>
+    <p>Agent 머신에 GitHub SSH 키가 설정되어 있다면 SSH URL을 사용합니다.</p>
+<pre><code>git@github.com:owner/repo.git</code></pre>
+    <p>SSH 키 설정이 없다면:</p>
+<pre><code># 키 생성
+ssh-keygen -t ed25519 -C "preview-agent"
+
+# 공개 키 확인 후 GitHub → Settings → SSH keys 에 추가
+cat ~/.ssh/id_ed25519.pub</code></pre>
+  </details>
+</details>
+
+<hr>
+
+{{/* ── Step 3: Agent 실행 ── */}}
+<details open>
+  <summary><strong>Step 3</strong> — Agent 실행</summary>
+  <p>
+    Hub 주소: <code>{{.HubHost}}</code><br>
+    Agent 이름: <code>{{.Name}}</code>
+  </p>
+
+  <details open>
+    <summary>Linux / macOS</summary>
+<pre><code>./agent start \
+  --hub-url=ws://{{.HubHost}}/agent/ws \
+  --token={{.Token}} \
+  --repo-url=https://github.com/owner/repo.git \
+  --advertise-host=$(hostname -I | awk '{print $1}') \
+  --label env=local</code></pre>
+    <p><small>
+      <code>--advertise-host</code>: Hub가 컨테이너로 프록시할 때 사용할 이 머신의 IP.<br>
+      <code>$(hostname -I | awk '{print $1}')</code>로 자동 감지하거나 직접 입력하세요.
+    </small></p>
+  </details>
+
+  <details>
+    <summary>macOS (hostname 방식)</summary>
+<pre><code>./agent start \
+  --hub-url=ws://{{.HubHost}}/agent/ws \
+  --token={{.Token}} \
+  --repo-url=https://github.com/owner/repo.git \
+  --advertise-host=$(ipconfig getifaddr en0) \
+  --label env=local</code></pre>
+  </details>
+
+  <details>
+    <summary>Windows (PowerShell)</summary>
+<pre><code>$IP = (Get-NetIPAddress -AddressFamily IPv4 `
+       -InterfaceAlias "Ethernet*","Wi-Fi*" |
+       Select-Object -First 1).IPAddress
+
+.\agent.exe start `
+  --hub-url=ws://{{.HubHost}}/agent/ws `
+  --token={{.Token}} `
+  --repo-url=https://github.com/owner/repo.git `
+  --advertise-host=$IP `
+  --label env=local</code></pre>
+  </details>
+
+  <details>
+    <summary>여러 라벨 지정</summary>
+<pre><code># 여러 --label 플래그를 반복 사용
+./agent start \
+  --hub-url=ws://{{.HubHost}}/agent/ws \
+  --token={{.Token}} \
+  --repo-url=https://github.com/owner/repo.git \
+  --label env=home \
+  --label arch=amd64 \
+  --label owner=alice</code></pre>
+    <p><small>GitHub PR에 동일한 라벨을 붙이면 해당 라벨을 가진 Agent에만 배정됩니다.</small></p>
+  </details>
+
+  <details>
+    <summary>주요 옵션</summary>
+    <table>
+      <thead><tr><th>플래그</th><th>기본값</th><th>설명</th></tr></thead>
+      <tbody>
+        <tr><td><code>--hub-url</code></td><td>—</td><td>Hub WebSocket 주소 (필수)</td></tr>
+        <tr><td><code>--token</code></td><td>—</td><td>이 페이지의 토큰 (필수)</td></tr>
+        <tr><td><code>--repo-url</code></td><td>—</td><td>빌드할 저장소 URL (필수)</td></tr>
+        <tr><td><code>--advertise-host</code></td><td>127.0.0.1</td><td>Hub → 컨테이너 접속 시 사용할 IP</td></tr>
+        <tr><td><code>--label</code></td><td>없음</td><td>라우팅 라벨 (반복 가능)</td></tr>
+        <tr><td><code>--max-jobs</code></td><td>1</td><td>동시 처리 최대 Job 수</td></tr>
+        <tr><td><code>--work-dir</code></td><td>~/.hub-agent</td><td>워크 디렉토리</td></tr>
+      </tbody>
+    </table>
+  </details>
+</details>
+
+<hr>
+
+{{/* ── Step 4: 확인 ── */}}
+<details>
+  <summary><strong>Step 4</strong> — Agent 연결 확인</summary>
+  <p>Agent를 실행한 뒤 이 대시보드의 <a href="/admin/agents">Agent 목록</a>에서
+  <strong>{{.Name}}</strong>의 상태가 <code>online</code>으로 바뀌는지 확인하세요.</p>
+  <p>그 다음 GitHub에서 PR을 열면 자동으로 빌드가 시작됩니다.</p>
+</details>
+
+<p style="margin-top:2rem">
+  <a href="/admin/agents" role="button" class="secondary">← Agent 목록으로</a>
 </p>
 {{end}}

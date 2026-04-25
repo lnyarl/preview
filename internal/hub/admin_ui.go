@@ -302,9 +302,10 @@ func (h *AdminUIHandler) CreateAgentForm(w http.ResponseWriter, r *http.Request)
 // ---------- Token display ----------
 
 type tokenView struct {
-	Title string
-	Name  string
-	Token string
+	Title    string
+	Name     string
+	Token    string
+	HubHost  string // e.g. "localhost:3000" — Agent 실행 명령에 사용
 }
 
 func (h *AdminUIHandler) agentToken(w http.ResponseWriter, r *http.Request) {
@@ -314,8 +315,13 @@ func (h *AdminUIHandler) agentToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing token", http.StatusBadRequest)
 		return
 	}
+	// r.Host 는 브라우저가 Hub 에 접속한 주소 — Agent 실행 명령 생성에 사용.
+	host := r.Host
+	if host == "" {
+		host = "localhost:3000"
+	}
 	h.renderHTML(w, http.StatusOK, "token.gohtml",
-		tokenView{Title: "Token", Name: name, Token: tok})
+		tokenView{Title: "Agent Setup", Name: name, Token: tok, HubHost: host})
 }
 
 // ---------- Agent delete (SSR) ----------
