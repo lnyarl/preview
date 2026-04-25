@@ -474,19 +474,20 @@ func (s *PreviewStore) CountPreviewEvents(ctx context.Context, previewID string)
 	return n, nil
 }
 
-// ListPreviewEvents 는 단위 테스트용 helper. preview_id 의 모든 이벤트를
-// created_at ASC 로 반환한다.
+// PreviewEventRow 는 단위 테스트용 helper 의 반환 row 타입.
 type PreviewEventRow struct {
 	FromStatus *string
 	ToStatus   string
 	Message    string
 }
 
-// ListPreviewEvents 는 preview_id 에 속한 preview_events 를 created_at ASC 로 반환한다.
-func (s *PreviewStore) ListPreviewEvents(ctx context.Context, previewID string) ([]PreviewEventRow, error) {
+// ListPreviewEventsRaw 는 preview_id 에 속한 preview_events 를 created_at ASC
+// 로 반환하는 단위 테스트용 helper. 인터페이스 (store.PreviewStore.ListPreviewEvents)
+// 와 시그니처가 다르므로 분리 보관 (Phase 3 §5-12 의 이름 충돌 해결 방법).
+func (s *PreviewStore) ListPreviewEventsRaw(ctx context.Context, previewID string) ([]PreviewEventRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT from_status, to_status, message FROM preview_events WHERE preview_id = ? ORDER BY created_at ASC`, previewID)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite.ListPreviewEvents: %w", err)
+		return nil, fmt.Errorf("sqlite.ListPreviewEventsRaw: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := []PreviewEventRow{}
@@ -504,6 +505,46 @@ func (s *PreviewStore) ListPreviewEvents(ctx context.Context, previewID string) 
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// ListPreviewEvents 는 store.PreviewStore 인터페이스 구현. sqlc 의 ListPreviewEvents
+// 쿼리를 감싸 도메인 store.PreviewEvent 슬라이스로 변환한다 (Phase 3 §5-12).
+// limit ≤ 0 이면 50 으로 정규화. offset 은 그대로 사용.
+func (s *PreviewStore) ListPreviewEvents(ctx context.Context, previewID string, limit, offset int) ([]store.PreviewEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.q.ListPreviewEvents(ctx, ListPreviewEventsParams{
+		PreviewID: previewID,
+		Limit:     int64(limit),
+		Offset:    int64(offset),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListPreviewEvents: %w", err)
+	}
+	out := make([]store.PreviewEvent, 0, len(rows))
+	for _, r := range rows {
+		createdAt, perr := time.Parse(iso8601, r.CreatedAt)
+		if perr != nil {
+			return nil, fmt.Errorf("sqlite.ListPreviewEvents: parse created_at: %w", perr)
+		}
+		ev := store.PreviewEvent{
+			ID:        r.ID,
+			PreviewID: r.PreviewID,
+			ToStatus:  r.ToStatus,
+			Message:   r.Message,
+			CreatedAt: createdAt,
+		}
+		if r.FromStatus.Valid {
+			v := r.FromStatus.String
+			ev.FromStatus = &v
+		}
+		out = append(out, ev)
 	}
 	return out, nil
 }

@@ -78,7 +78,7 @@ func TestPreviewStoreUpsertNewInsertsEvent(t *testing.T) {
 	}
 
 	// 룰 R1: 신규 INSERT → event 1건 (NULL → queued).
-	evs, err := s.ListPreviewEvents(ctx, p.ID)
+	evs, err := s.ListPreviewEventsRaw(ctx, p.ID)
 	if err != nil {
 		t.Fatalf("ListPreviewEvents: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPreviewStoreUpsertExistingUpdatesNoEvent(t *testing.T) {
 	}
 
 	// 룰 R2: status 변경 없음 → 이벤트는 신규 INSERT 시점 1건만.
-	evs, err := s.ListPreviewEvents(ctx, p.ID)
+	evs, err := s.ListPreviewEventsRaw(ctx, p.ID)
 	if err != nil {
 		t.Fatalf("ListPreviewEvents: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestPreviewStoreUpdateStatusInsertsEvent(t *testing.T) {
 		t.Fatalf("error_message=%v", got.ErrorMessage)
 	}
 	// 룰 R1: 신규 1건(insert) + UpdateStatus 1건 = 2건.
-	evs, err := s.ListPreviewEvents(ctx, id)
+	evs, err := s.ListPreviewEventsRaw(ctx, id)
 	if err != nil {
 		t.Fatalf("ListPreviewEvents: %v", err)
 	}
@@ -504,7 +504,7 @@ func TestPreviewStoreResetAllAssigned(t *testing.T) {
 			t.Fatalf("id=%s status=%s want queued", id, got.Status)
 		}
 		// 이벤트 마지막은 assigned → queued.
-		evs, _ := s.ListPreviewEvents(ctx, id)
+		evs, _ := s.ListPreviewEventsRaw(ctx, id)
 		last := evs[len(evs)-1]
 		if last.FromStatus == nil || *last.FromStatus != "assigned" || last.ToStatus != "queued" {
 			t.Fatalf("id=%s last event=%+v", id, last)

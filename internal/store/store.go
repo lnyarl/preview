@@ -130,4 +130,19 @@ type PreviewStore interface {
 	// 작은 확장. Step 2 의 ListQueuedForCandidates / Step 3 의 ListByAgent 와는
 	// 직교 — admin /admin/previews 와 cmd/hub previews list 가 본 메서드를 사용.
 	ListAll(ctx context.Context) ([]Preview, error)
+
+	// ListPreviewEvents 는 preview detail 페이지의 timeline 렌더에 사용된다.
+	// (Phase 3 §5-12). created_at ASC, id ASC 로 정렬.
+	ListPreviewEvents(ctx context.Context, previewID string, limit, offset int) ([]PreviewEvent, error)
+}
+
+// PreviewEvent 는 preview_events 한 row 의 도메인 표현.
+// FromStatus 가 NULL (최초 INSERT) 이면 nil.
+type PreviewEvent struct {
+	ID         string
+	PreviewID  string
+	FromStatus *string
+	ToStatus   string
+	Message    string
+	CreatedAt  time.Time
 }
