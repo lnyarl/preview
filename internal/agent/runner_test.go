@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -127,9 +128,6 @@ func (d *dockerfileRunner) Run(ctx context.Context, name string, args ...string)
 			if a == "add" && i+2 < len(args) {
 				path := args[i+2]
 				_ = os.WriteFile(filepath.Join(path, "Dockerfile"), []byte("FROM nginx:alpine\n"), 0o644)
-				// preview.yml: 테스트에서는 docker 대신 echo 로 빌드 성공 시뮬레이션.
-				_ = os.WriteFile(filepath.Join(path, "preview.yml"),
-					[]byte("build:\n  - echo \"test build $PREVIEW_IMAGE\"\nport: 80\n"), 0o644)
 				return nil
 			}
 		}
@@ -154,9 +152,8 @@ func TestRunnerHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	// 빌드는 이제 shell 명령(preview.yml) 으로 수행 — fake docker ImageBuild 미호출.
-	if docker.createCalls != 1 || docker.startCalls != 1 {
-		t.Fatalf("docker calls: create=%d start=%d", docker.createCalls, docker.startCalls)
+	if docker.buildCalls != 1 || docker.createCalls != 1 || docker.startCalls != 1 {
+		t.Fatalf("docker calls: build=%d create=%d start=%d", docker.buildCalls, docker.createCalls, docker.startCalls)
 	}
 	statuses := hub.statuses()
 	if len(statuses) < 2 || statuses[0] != "building" || statuses[len(statuses)-1] != "running" {
@@ -168,9 +165,9 @@ func TestRunnerHappyPath(t *testing.T) {
 	}
 }
 
-func TestRunnerNoPreviewConfig(t *testing.T) {
-	// preview.yml 없음 → 기본 "docker build" 명령 실행 → 테스트 환경에서 실패 → status=failed.
-	runner, _, hub, _ := newRunnerSetup(t, false)
+func TestRunnerNoDockerfile(t *testing.T) {
+	// withDockerfile=false → worktree 에 Dockerfile 없음.
+	runner, docker, hub, _ := newRunnerSetup(t, false)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -180,11 +177,17 @@ func TestRunnerNoPreviewConfig(t *testing.T) {
 		CommitSHA: "abc",
 	})
 	if err == nil {
-		t.Fatalf("expected failure when build command fails")
+		t.Fatalf("expected failure on missing Dockerfile")
+	}
+	if docker.buildCalls != 0 {
+		t.Fatalf("build called=%d", docker.buildCalls)
 	}
 	statuses := hub.statuses()
-	if len(statuses) < 1 || statuses[len(statuses)-1] != "failed" {
-		t.Fatalf("statuses=%v want last=failed", statuses)
+	if len(statuses) < 2 {
+		t.Fatalf("statuses=%v", statuses)
+	}
+	if statuses[len(statuses)-1] != "failed" {
+		t.Fatalf("last status=%s want failed", statuses[len(statuses)-1])
 	}
 }
 
@@ -218,19 +221,12 @@ func TestRunnerTeardown(t *testing.T) {
 }
 
 func TestRunnerBuildError(t *testing.T) {
-	// preview.yml 에 실패하는 명령을 넣어 build error 시뮬레이션.
-	runner, _, hub, _ := newRunnerSetup(t, false)
+	runner, docker, hub, _ := newRunnerSetup(t, true)
 	ctx := context.Background()
+	docker.buildErr = errors.New("build boom")
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	// worktree 경로에 실패 명령이 있는 preview.yml 주입.
-	wt, _ := runner.cache.Checkout(ctx, "p1", "abc")
-	_ = os.WriteFile(filepath.Join(wt, "preview.yml"),
-		[]byte("build:\n  - exit 1\nport: 80\n"), 0o644)
-	// 새 Handle 호출을 위해 jobs 맵 초기화.
-	runner.jobs.Delete("p1")
-
 	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err == nil {
 		t.Fatalf("expected error")
 	}

@@ -59,7 +59,6 @@ func NewAdminUIHandler(as store.AgentStore, ps store.PreviewStore, tg *token.Gen
 		"token.gohtml",
 		"previews.gohtml",
 		"preview_detail.gohtml",
-		"settings.gohtml",
 	})
 	return h
 }
@@ -76,7 +75,6 @@ func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/agents/token", h.agentToken)
 	mux.HandleFunc("POST /admin/agents/{id}/delete", h.agentDelete)
 	mux.HandleFunc("POST /admin/previews/{id}/rebuild", h.previewRebuild)
-	mux.HandleFunc("GET /admin/settings", h.settings)
 }
 
 // mustParsePages 는 layout.gohtml + 각 페이지를 합쳐 별도 *template.Template 로 만든다.
@@ -581,8 +579,3 @@ func (h *AdminUIHandler) previewRebuild(w http.ResponseWriter, r *http.Request) 
 }
 
 
-// ---------- Settings ----------
-
-func (h *AdminUIHandler) settings(w http.ResponseWriter, r *http.Request) {
-	h.renderHTML(w, http.StatusOK, "settings.gohtml", struct{ Title string }{"Settings"})
-}
