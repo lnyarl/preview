@@ -2,7 +2,7 @@
 //   - env 및 flag 로부터 Hub 설정 로딩.
 //   - 기본값은 HUB_ADDR=:3000, DATABASE_URL=sqlite://./hub.db, BCRYPT_COST=10, LOG_LEVEL=info.
 //   - Phase 2 추가: GITHUB_WEBHOOK_SECRET (필수, 시작 시 fail-fast),
-//     PREVIEW_BASE_DOMAIN (기본 preview.localhost, Step 3 에서 활성).
+//     PREVIEW_BASE_DOMAIN (기본 localhost — 프록시 매칭 base, Step 3 에서 활성).
 //
 // 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-7 +
 //
@@ -13,6 +13,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"time"
 )
 
 // ErrWebhookSecretMissing 은 GITHUB_WEBHOOK_SECRET 이 비어있을 때 반환된다(NF-Security-3).
@@ -20,13 +21,15 @@ var ErrWebhookSecretMissing = errors.New("config: GITHUB_WEBHOOK_SECRET required
 
 // Config 는 Hub 기동에 필요한 런타임 설정.
 type Config struct {
-	Addr              string // 바인드 주소. :3000 기본
-	DatabaseURL       string // DB DSN
-	BcryptCost        int    // bcrypt cost, 기본 10
-	LogLevel          string // slog 레벨 (debug/info/warn/error)
-	WebhookSecret     string // GitHub webhook HMAC secret. 비어있으면 fail-fast.
-	PreviewBaseDomain string // reverse proxy 호스트 매칭 base. Step 3 에서 사용.
-	PreviewRepoURL    string // 단일 레포 가정(결정 9). webhook 의 repo_full_name 을 git URL 로 변환.
+	Addr              string        // 바인드 주소. :3000 기본
+	DatabaseURL       string        // DB DSN
+	BcryptCost        int           // bcrypt cost, 기본 10
+	LogLevel          string        // slog 레벨 (debug/info/warn/error)
+	WebhookSecret     string        // GitHub webhook HMAC secret. 비어있으면 fail-fast.
+	PreviewBaseDomain string        // reverse proxy 호스트 매칭 base. Step 3 에서 사용.
+	PreviewRepoURL    string        // 단일 레포 가정(결정 9). webhook 의 repo_full_name 을 git URL 로 변환.
+	ReconcileInterval   time.Duration // reconciler 주기 (기본 60s).
+	StaleAssignedAfter time.Duration // assigned 임계 (기본 5m).
 }
 
 // DefaultConfig 는 env 를 읽어 기본값이 채워진 Config 를 만든다.
@@ -38,8 +41,10 @@ func DefaultConfig() Config {
 		BcryptCost:        envInt("BCRYPT_COST", 10),
 		LogLevel:          envOr("LOG_LEVEL", "info"),
 		WebhookSecret:     os.Getenv("GITHUB_WEBHOOK_SECRET"),
-		PreviewBaseDomain: envOr("PREVIEW_BASE_DOMAIN", "preview.localhost"),
-		PreviewRepoURL:    os.Getenv("PREVIEW_REPO_URL"),
+		PreviewBaseDomain:  envOr("PREVIEW_BASE_DOMAIN", "localhost"),
+		PreviewRepoURL:     os.Getenv("PREVIEW_REPO_URL"),
+		ReconcileInterval:  envDuration("RECONCILE_INTERVAL", 60*time.Second),
+		StaleAssignedAfter: envDuration("STALE_ASSIGNED_AFTER", 5*time.Minute),
 	}
 }
 
@@ -63,6 +68,15 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return fallback
