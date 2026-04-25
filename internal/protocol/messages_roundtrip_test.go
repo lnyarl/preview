@@ -106,7 +106,7 @@ func TestMessageRoundTrip(t *testing.T) {
 			name: "AGENT_CONFIG",
 			typ:  TypeAgentConfig,
 			data: AgentConfigData{
-				BuildCommands: []string{"npm ci", "npm run build"},
+				RunCommands:   []string{"npm ci", "npm run build"},
 				ContainerPort: 3000,
 			},
 			want: &AgentConfigData{},
@@ -115,7 +115,7 @@ func TestMessageRoundTrip(t *testing.T) {
 			name: "CONFIG_UPDATE",
 			typ:  TypeConfigUpdate,
 			data: AgentConfigData{
-				BuildCommands: []string{"docker build -t $PREVIEW_IMAGE ."},
+				RunCommands:   []string{"./deploy.sh"},
 				ContainerPort: 80,
 			},
 			want: &AgentConfigData{},
@@ -124,7 +124,7 @@ func TestMessageRoundTrip(t *testing.T) {
 			name: "AGENT_CONFIG defaults sentinel",
 			typ:  TypeAgentConfig,
 			data: AgentConfigData{
-				BuildCommands: []string{},
+				RunCommands:   []string{},
 				ContainerPort: 0,
 			},
 			want: &AgentConfigData{},

@@ -265,8 +265,8 @@ func TestWSHandshakeSuccess(t *testing.T) {
 		t.Fatalf("decode AGENT_CONFIG: %v", err)
 	}
 	// 신규 등록 agent → DB sentinel ([], 0).
-	if len(cfg.BuildCommands) != 0 {
-		t.Fatalf("expected empty BuildCommands, got %v", cfg.BuildCommands)
+	if len(cfg.RunCommands) != 0 {
+		t.Fatalf("expected empty RunCommands, got %v", cfg.RunCommands)
 	}
 	if cfg.ContainerPort != 0 {
 		t.Fatalf("expected ContainerPort=0, got %d", cfg.ContainerPort)
@@ -308,8 +308,8 @@ func TestWSAgentConfigSentWithStoredValues(t *testing.T) {
 	if err := cfgEnv.Decode(&cfg); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(cfg.BuildCommands) != 2 || cfg.BuildCommands[0] != "npm ci" || cfg.BuildCommands[1] != "npm run build" {
-		t.Fatalf("BuildCommands=%v", cfg.BuildCommands)
+	if len(cfg.RunCommands) != 2 || cfg.RunCommands[0] != "npm ci" || cfg.RunCommands[1] != "npm run build" {
+		t.Fatalf("RunCommands=%v", cfg.RunCommands)
 	}
 	if cfg.ContainerPort != 3000 {
 		t.Fatalf("ContainerPort=%d want 3000", cfg.ContainerPort)

@@ -156,7 +156,7 @@ func TestAgentBuildConfig(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// 신규 Agent 등록 (build_commands NULL, container_port NULL).
+	// 신규 Agent 등록 (run_commands NULL, container_port NULL).
 	a := store.Agent{
 		ID:        "agent-bc-1",
 		Name:      "agent-bc",
@@ -181,7 +181,7 @@ func TestAgentBuildConfig(t *testing.T) {
 	}
 
 	// F-4: 저장 → 검색 round-trip.
-	rawSave := "npm ci\nnpm run build\ndocker build -t $PREVIEW_IMAGE ."
+	rawSave := "npm ci\nnpm run build\n./deploy.sh"
 	if err := s.SaveBuildConfig(ctx, a.ID, rawSave, 3000); err != nil {
 		t.Fatalf("SaveBuildConfig: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestAgentBuildConfig(t *testing.T) {
 	if len(cmds) != 3 {
 		t.Fatalf("cmds len=%d want 3, got %v", len(cmds), cmds)
 	}
-	if cmds[0] != "npm ci" || cmds[1] != "npm run build" {
+	if cmds[0] != "npm ci" || cmds[1] != "npm run build" || cmds[2] != "./deploy.sh" {
 		t.Fatalf("cmds=%v", cmds)
 	}
 	if port != 3000 {

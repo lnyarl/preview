@@ -138,11 +138,11 @@ func (d *dockerfileRunner) Output(ctx context.Context, name string, args ...stri
 }
 
 // withNoopBuildHolder 는 Holder 를 만들고 ":" (no-op POSIX shell builtin) 1줄을
-// build_commands 로 적용한다. 셸 의존만 있고 외부 도구(docker) 없이도 항상 성공.
+// run_commands 로 적용한다. 셸 의존만 있고 외부 도구(docker) 없이도 항상 성공.
 func withNoopBuildHolder(t *testing.T, runner *Runner) *Holder {
 	t.Helper()
 	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{BuildCommands: []string{":"}})
+	h.Replace(protocol.AgentConfigData{RunCommands: []string{":"}})
 	runner.SetHolder(h)
 	return h
 }
@@ -181,8 +181,8 @@ func TestRunnerHappyPath(t *testing.T) {
 }
 
 // TestRunnerNoDockerfileNotFatal — Phase 4 결정 4: Dockerfile 강제 검사가 제거되었으므로
-// Dockerfile 부재가 더 이상 즉시 실패를 일으키지 않는다. 기본 빌드 명령(`docker build ...`)
-// 이 실패하면 build_step_1 으로 fail. 명시적 비-docker 빌드 명령(":") 으로 성공도 가능.
+// Dockerfile 부재가 더 이상 즉시 실패를 일으키지 않는다. 명시적 비-docker run 명령(":")
+// 으로 성공도 가능.
 func TestRunnerNoDockerfileNotFatal(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, false)
 	withNoopBuildHolder(t, runner) // ":" 명령은 Dockerfile 없어도 성공.
@@ -236,12 +236,12 @@ func TestRunnerTeardown(t *testing.T) {
 	}
 }
 
-// TestRunnerBuildError — Phase 4: 빌드 명령이 셸에서 non-zero exit 일 때 STATUS_UPDATE failed.
+// TestRunnerBuildError — Phase 4: run 명령이 셸에서 non-zero exit 일 때 STATUS_UPDATE failed.
 func TestRunnerBuildError(t *testing.T) {
 	runner, _, hub, _ := newRunnerSetup(t, true)
 	// "false" 는 항상 exit 1 인 POSIX 명령.
 	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{BuildCommands: []string{"false"}})
+	h.Replace(protocol.AgentConfigData{RunCommands: []string{"false"}})
 	runner.SetHolder(h)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
@@ -260,7 +260,7 @@ func TestRunnerBuildError(t *testing.T) {
 func TestRunnerCustomContainerPort(t *testing.T) {
 	runner, docker, _, _ := newRunnerSetup(t, true)
 	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{BuildCommands: []string{":"}, ContainerPort: 3000})
+	h.Replace(protocol.AgentConfigData{RunCommands: []string{":"}, ContainerPort: 3000})
 	runner.SetHolder(h)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
@@ -280,7 +280,7 @@ func TestRunnerMultiLineBuild(t *testing.T) {
 	runner, _, hub, _ := newRunnerSetup(t, true)
 	h := NewHolder()
 	h.Replace(protocol.AgentConfigData{
-		BuildCommands: []string{
+		RunCommands: []string{
 			"touch step1.marker",
 			"test -f step1.marker",
 		},
@@ -299,12 +299,13 @@ func TestRunnerMultiLineBuild(t *testing.T) {
 	}
 }
 
-// TestRunnerEnvironmentVariables — Phase 4: 4개 + PORT env 가 빌드 명령에서 보인다.
+// TestRunnerEnvironmentVariables — Phase 4: PREVIEW_* + PORT env 가 run 명령에서 보인다.
+// $PREVIEW_IMAGE 는 docker 가정을 제거하면서 환경변수에서 빠졌다.
 func TestRunnerEnvironmentVariables(t *testing.T) {
 	runner, _, hub, root := newRunnerSetup(t, true)
 	h := NewHolder()
 	h.Replace(protocol.AgentConfigData{
-		BuildCommands: []string{
+		RunCommands: []string{
 			// env 를 파일에 저장 → 검증.
 			"env | grep -E '^(PREVIEW_|PORT=)' > " + filepath.Join(root, "envcap.txt") + " || true",
 		},
@@ -329,7 +330,7 @@ func TestRunnerEnvironmentVariables(t *testing.T) {
 		t.Skipf("env capture file missing (env grep may behave differently): %v", err)
 	}
 	captured := string(data)
-	for _, want := range []string{"PREVIEW_ID=p1", "PREVIEW_IMAGE=preview-p1:latest",
+	for _, want := range []string{"PREVIEW_ID=p1",
 		"PREVIEW_SHA=deadbeef", "PREVIEW_BRANCH=feat/x", "PORT=80"} {
 		if !strings.Contains(captured, want) {
 			t.Errorf("env capture missing %q. got: %s", want, captured)

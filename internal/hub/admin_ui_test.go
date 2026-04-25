@@ -452,12 +452,10 @@ func TestAdminAgentDetailRenders(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"agent-home",
-		`name="build_commands"`,
+		`name="run_commands"`,
 		`name="container_port"`,
-		`placeholder="docker build -t $PREVIEW_IMAGE ."`,
 		`placeholder="80"`,
 		"$PREVIEW_ID",
-		"$PREVIEW_IMAGE",
 		"$PREVIEW_SHA",
 		"$PREVIEW_BRANCH",
 		"$PORT",
@@ -465,6 +463,10 @@ func TestAdminAgentDetailRenders(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)
 		}
+	}
+	// $PREVIEW_IMAGE 는 docker 가정 제거와 함께 사라져야 한다.
+	if strings.Contains(body, "$PREVIEW_IMAGE") {
+		t.Errorf("body should not contain $PREVIEW_IMAGE anymore:\n%s", body)
 	}
 }
 
@@ -519,7 +521,7 @@ func TestAdminAgentConfigSaveRedirect(t *testing.T) {
 		ID: "a1", Name: "ag", Status: "offline", CreatedAt: time.Now().UTC(),
 	})
 
-	form := strings.NewReader("build_commands=npm+ci%0Anpm+run+build&container_port=3000")
+	form := strings.NewReader("run_commands=npm+ci%0Anpm+run+build&container_port=3000")
 	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
 	req.SetPathValue("id", "a1")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -564,7 +566,7 @@ func TestAdminAgentConfigSavePushDelivered(t *testing.T) {
 		ID: "a1", Name: "ag", Status: "online", CreatedAt: time.Now().UTC(),
 	})
 
-	form := strings.NewReader("build_commands=echo+hi&container_port=8080")
+	form := strings.NewReader("run_commands=echo+hi&container_port=8080")
 	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
 	req.SetPathValue("id", "a1")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -579,8 +581,8 @@ func TestAdminAgentConfigSavePushDelivered(t *testing.T) {
 	if sender.agentID != "a1" {
 		t.Errorf("agentID=%q want a1", sender.agentID)
 	}
-	if len(sender.cfg.BuildCommands) != 1 || sender.cfg.BuildCommands[0] != "echo hi" {
-		t.Errorf("cfg.BuildCommands=%v", sender.cfg.BuildCommands)
+	if len(sender.cfg.RunCommands) != 1 || sender.cfg.RunCommands[0] != "echo hi" {
+		t.Errorf("cfg.RunCommands=%v", sender.cfg.RunCommands)
 	}
 	if sender.cfg.ContainerPort != 8080 {
 		t.Errorf("cfg.ContainerPort=%d want 8080", sender.cfg.ContainerPort)
@@ -603,7 +605,7 @@ func TestAdminAgentConfigSavePushOffline(t *testing.T) {
 	_ = as.Create(context.Background(), store.Agent{
 		ID: "a1", Name: "ag", Status: "offline", CreatedAt: time.Now().UTC(),
 	})
-	form := strings.NewReader("build_commands=&container_port=")
+	form := strings.NewReader("run_commands=&container_port=")
 	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
 	req.SetPathValue("id", "a1")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -628,7 +630,7 @@ func TestAdminAgentConfigSavePushFailed(t *testing.T) {
 	_ = as.Create(context.Background(), store.Agent{
 		ID: "a1", Name: "ag", Status: "online", CreatedAt: time.Now().UTC(),
 	})
-	form := strings.NewReader("build_commands=:&container_port=80")
+	form := strings.NewReader("run_commands=:&container_port=80")
 	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
 	req.SetPathValue("id", "a1")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
