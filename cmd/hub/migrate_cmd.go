@@ -5,7 +5,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/lnyarl/preview/internal/db/sqlite"
+	"github.com/joho/godotenv"
+	sqlitestore "github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
 )
 
@@ -13,6 +14,7 @@ func runMigrate(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("migrate requires subcommand: up | down | version")
 	}
+	_ = godotenv.Load()
 	cfg := hub.DefaultConfig()
 	logger := hub.NewLogger(cfg.LogLevel)
 

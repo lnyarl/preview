@@ -13,7 +13,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/lnyarl/preview/internal/db/sqlite"
+	"github.com/joho/godotenv"
+	sqlitestore "github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
 )
 
@@ -27,6 +28,7 @@ func runAgents(args []string) error {
 	if args[0] != "list" {
 		return errAgentsUsage
 	}
+	_ = godotenv.Load()
 	cfg := hub.DefaultConfig()
 	ctx := context.Background()
 	db, err := sqlitestore.OpenURL(ctx, cfg.DatabaseURL)

@@ -16,7 +16,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lnyarl/preview/internal/db/sqlite"
+	"github.com/joho/godotenv"
+	sqlitestore "github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
 	"github.com/lnyarl/preview/internal/store"
 )
@@ -28,6 +29,8 @@ func runPreviews(args []string) error {
 	if len(args) == 0 {
 		return errPreviewsUsage
 	}
+
+	_ = godotenv.Load()
 	cfg := hub.DefaultConfig()
 	ctx := context.Background()
 	db, err := sqlitestore.OpenURL(ctx, cfg.DatabaseURL)
