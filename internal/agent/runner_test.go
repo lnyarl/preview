@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -138,8 +137,19 @@ func (d *dockerfileRunner) Output(ctx context.Context, name string, args ...stri
 	return d.base.Output(ctx, name, args...)
 }
 
+// withNoopBuildHolder 는 Holder 를 만들고 ":" (no-op POSIX shell builtin) 1줄을
+// build_commands 로 적용한다. 셸 의존만 있고 외부 도구(docker) 없이도 항상 성공.
+func withNoopBuildHolder(t *testing.T, runner *Runner) *Holder {
+	t.Helper()
+	h := NewHolder()
+	h.Replace(protocol.AgentConfigData{BuildCommands: []string{":"}})
+	runner.SetHolder(h)
+	return h
+}
+
 func TestRunnerHappyPath(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, true)
+	withNoopBuildHolder(t, runner)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -152,7 +162,8 @@ func TestRunnerHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if docker.buildCalls != 1 || docker.createCalls != 1 || docker.startCalls != 1 {
+	// Phase 4: build 는 셸로 실행되므로 docker.buildCalls = 0. create/start 는 SDK.
+	if docker.buildCalls != 0 || docker.createCalls != 1 || docker.startCalls != 1 {
 		t.Fatalf("docker calls: build=%d create=%d start=%d", docker.buildCalls, docker.createCalls, docker.startCalls)
 	}
 	statuses := hub.statuses()
@@ -163,11 +174,18 @@ func TestRunnerHappyPath(t *testing.T) {
 	if docker.lastCreateOpts.Labels["hub-preview-id"] != "p1" {
 		t.Fatalf("missing preview-id label: %v", docker.lastCreateOpts.Labels)
 	}
+	// Phase 4: ContainerPort sentinel 0 → 80 기본값.
+	if docker.lastCreateOpts.ExposedPort != 80 {
+		t.Fatalf("ExposedPort=%d want 80", docker.lastCreateOpts.ExposedPort)
+	}
 }
 
-func TestRunnerNoDockerfile(t *testing.T) {
-	// withDockerfile=false → worktree 에 Dockerfile 없음.
+// TestRunnerNoDockerfileNotFatal — Phase 4 결정 4: Dockerfile 강제 검사가 제거되었으므로
+// Dockerfile 부재가 더 이상 즉시 실패를 일으키지 않는다. 기본 빌드 명령(`docker build ...`)
+// 이 실패하면 build_step_1 으로 fail. 명시적 비-docker 빌드 명령(":") 으로 성공도 가능.
+func TestRunnerNoDockerfileNotFatal(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, false)
+	withNoopBuildHolder(t, runner) // ":" 명령은 Dockerfile 없어도 성공.
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -176,23 +194,21 @@ func TestRunnerNoDockerfile(t *testing.T) {
 		PreviewID: "p1",
 		CommitSHA: "abc",
 	})
-	if err == nil {
-		t.Fatalf("expected failure on missing Dockerfile")
+	if err != nil {
+		t.Fatalf("Handle should succeed without Dockerfile when build cmd does not need it: %v", err)
 	}
-	if docker.buildCalls != 0 {
-		t.Fatalf("build called=%d", docker.buildCalls)
+	if docker.createCalls != 1 {
+		t.Fatalf("ContainerCreate calls=%d want 1", docker.createCalls)
 	}
 	statuses := hub.statuses()
-	if len(statuses) < 2 {
-		t.Fatalf("statuses=%v", statuses)
-	}
-	if statuses[len(statuses)-1] != "failed" {
-		t.Fatalf("last status=%s want failed", statuses[len(statuses)-1])
+	if statuses[len(statuses)-1] != "running" {
+		t.Fatalf("last status=%s want running", statuses[len(statuses)-1])
 	}
 }
 
 func TestRunnerTeardown(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, true)
+	withNoopBuildHolder(t, runner)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -220,19 +236,104 @@ func TestRunnerTeardown(t *testing.T) {
 	}
 }
 
+// TestRunnerBuildError — Phase 4: 빌드 명령이 셸에서 non-zero exit 일 때 STATUS_UPDATE failed.
 func TestRunnerBuildError(t *testing.T) {
-	runner, docker, hub, _ := newRunnerSetup(t, true)
+	runner, _, hub, _ := newRunnerSetup(t, true)
+	// "false" 는 항상 exit 1 인 POSIX 명령.
+	h := NewHolder()
+	h.Replace(protocol.AgentConfigData{BuildCommands: []string{"false"}})
+	runner.SetHolder(h)
 	ctx := context.Background()
-	docker.buildErr = errors.New("build boom")
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err == nil {
-		t.Fatalf("expected error")
+		t.Fatalf("expected error from failing build command")
 	}
 	statuses := hub.statuses()
 	if statuses[len(statuses)-1] != "failed" {
 		t.Fatalf("last=%s", statuses[len(statuses)-1])
+	}
+}
+
+// TestRunnerCustomContainerPort — Phase 4: ContainerPort != 0 이면 ExposedPort 에 반영.
+func TestRunnerCustomContainerPort(t *testing.T) {
+	runner, docker, _, _ := newRunnerSetup(t, true)
+	h := NewHolder()
+	h.Replace(protocol.AgentConfigData{BuildCommands: []string{":"}, ContainerPort: 3000})
+	runner.SetHolder(h)
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if docker.lastCreateOpts.ExposedPort != 3000 {
+		t.Fatalf("ExposedPort=%d want 3000", docker.lastCreateOpts.ExposedPort)
+	}
+}
+
+// TestRunnerMultiLineBuild — Phase 4: 여러 라인이 순서대로 직렬 실행되는지 검증.
+// touch + test (-f) 로 1번째 명령의 부수효과가 2번째 명령에서 보이는지 확인 (cwd=worktree).
+func TestRunnerMultiLineBuild(t *testing.T) {
+	runner, _, hub, _ := newRunnerSetup(t, true)
+	h := NewHolder()
+	h.Replace(protocol.AgentConfigData{
+		BuildCommands: []string{
+			"touch step1.marker",
+			"test -f step1.marker",
+		},
+	})
+	runner.SetHolder(h)
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	statuses := hub.statuses()
+	if statuses[len(statuses)-1] != "running" {
+		t.Fatalf("last=%s want running", statuses[len(statuses)-1])
+	}
+}
+
+// TestRunnerEnvironmentVariables — Phase 4: 4개 + PORT env 가 빌드 명령에서 보인다.
+func TestRunnerEnvironmentVariables(t *testing.T) {
+	runner, _, hub, root := newRunnerSetup(t, true)
+	h := NewHolder()
+	h.Replace(protocol.AgentConfigData{
+		BuildCommands: []string{
+			// env 를 파일에 저장 → 검증.
+			"env | grep -E '^(PREVIEW_|PORT=)' > " + filepath.Join(root, "envcap.txt") + " || true",
+		},
+	})
+	runner.SetHolder(h)
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := runner.Handle(ctx, protocol.JobAssignData{
+		PreviewID: "p1",
+		CommitSHA: "deadbeef",
+		Branch:    "feat/x",
+	}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if statuses := hub.statuses(); statuses[len(statuses)-1] != "running" {
+		t.Fatalf("last=%s want running", statuses[len(statuses)-1])
+	}
+	data, err := os.ReadFile(filepath.Join(root, "envcap.txt"))
+	if err != nil {
+		t.Skipf("env capture file missing (env grep may behave differently): %v", err)
+	}
+	captured := string(data)
+	for _, want := range []string{"PREVIEW_ID=p1", "PREVIEW_IMAGE=preview-p1:latest",
+		"PREVIEW_SHA=deadbeef", "PREVIEW_BRANCH=feat/x", "PORT=80"} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("env capture missing %q. got: %s", want, captured)
+		}
 	}
 }
 

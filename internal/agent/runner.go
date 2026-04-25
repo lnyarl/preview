@@ -1,23 +1,27 @@
 // 이 파일의 책임:
-//   - JOB_ASSIGN 수신 시 building → docker build → docker run → STATUS_UPDATE running 송신.
+//   - JOB_ASSIGN 수신 시 building → 셸 빌드 명령 실행 → docker run → STATUS_UPDATE running 송신.
 //   - JOB_TEARDOWN 수신 시 컨테이너 stop+rm → worktree remove → STATUS_UPDATE done 송신.
 //   - 동적 포트 할당 (net.Listen ":0") + 1회 재시도 (결정 8, F-S2-14).
 //   - jobs map: previewID → 메모리 상태 (containerID, port, worktree). 재시작 복원은 Step 3 이월.
+//   - Phase 4: 빌드 명령을 셸로 실행 (`sh -c <line>`), 컨테이너 포트는 Holder.Snapshot 으로
+//     결정. Dockerfile 강제 검사는 제거 (결정 4).
 //
 // fake DockerClient 로 단위 테스트 주입 (NF-Test-Docker-1).
 //
-// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6/8.
+// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6/8,
+//       docs/specs/phase-4-agent-build-config.md §4-7, 결정 3/4/5/11.
 package agent
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
+	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -46,6 +50,7 @@ type Runner struct {
 	hub     HubSender
 	advHost string
 	logger  *slog.Logger
+	holder  *Holder // Phase 4: 빌드 설정 (nil 허용 = 기본값으로 동작).
 
 	jobs     sync.Map    // previewID -> *runningJob
 	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
@@ -102,6 +107,9 @@ func NewRunner(docker DockerClient, cache *RepoCache, hub HubSender, advHost str
 	}
 }
 
+// SetHolder 는 빌드 설정 보관소를 주입한다 (Phase 4). nil 이면 매 Handle 이 기본값 사용.
+func (r *Runner) SetHolder(h *Holder) { r.holder = h }
+
 // Handle 은 JOB_ASSIGN 1건을 처리한다. 실패 시 STATUS_UPDATE failed 송신.
 // 호출자는 보통 별도 goroutine 으로 호출.
 //
@@ -141,20 +149,47 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return r.fail(ctx, pid, "repocache_checkout", err)
 	}
 
-	// (3) Dockerfile 존재 확인.
-	if _, err := os.Stat(filepath.Join(worktree, "Dockerfile")); err != nil {
-		return r.fail(ctx, pid, "dockerfile_missing", err)
+	// (3) 빌드 설정 스냅샷 (결정 11: Handle 진입 시점 1회 받고 끝까지 사용).
+	snap := protocol.AgentConfigData{}
+	if r.holder != nil {
+		snap = r.holder.Snapshot()
+	}
+	cmds := snap.BuildCommands
+	if len(cmds) == 0 {
+		// 결정 2: 빈 슬라이스 = 기본값 적용.
+		cmds = []string{"docker build -t $PREVIEW_IMAGE ."}
+	}
+	resolvedPort := snap.ContainerPort
+	if resolvedPort == 0 {
+		// 결정 2: 0 = 기본값(80) 적용.
+		resolvedPort = 80
 	}
 
-	// (4) docker build.
+	// (4) 빌드 명령 셸 실행 (결정 3: sh -c 1 라인씩 직렬, cwd=worktree).
 	tag := "preview-" + pid + ":latest"
-	logs, err := r.docker.ImageBuild(ctx, worktree, BuildOptions{Tag: tag})
-	if err != nil {
-		return r.fail(ctx, pid, "image_build", err)
-	}
-	if logs != nil {
-		_, _ = io.Copy(io.Discard, logs)
-		_ = logs.Close()
+	buildEnv := append(os.Environ(),
+		"PREVIEW_ID="+pid,
+		"PREVIEW_IMAGE="+tag,
+		"PREVIEW_SHA="+msg.CommitSHA,
+		"PREVIEW_BRANCH="+msg.Branch,
+		"PORT="+strconv.Itoa(resolvedPort),
+	)
+	for i, line := range cmds {
+		r.logger.Info("agent_build_step",
+			"preview_id", pid, "step", i+1, "cmd", line)
+		c := exec.CommandContext(ctx, "sh", "-c", line)
+		c.Dir = worktree
+		c.Env = buildEnv
+		out, cerr := c.CombinedOutput()
+		if cerr != nil {
+			detail := strings.TrimSpace(string(out))
+			if len(detail) > 200 {
+				detail = detail[len(detail)-200:]
+			}
+			return r.fail(ctx, pid,
+				fmt.Sprintf("build_step_%d", i+1),
+				fmt.Errorf("%s: %w\n%s", line, cerr, detail))
+		}
 	}
 
 	// (5) 동적 포트 할당.
@@ -163,12 +198,12 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return r.fail(ctx, pid, "allocate_port", err)
 	}
 
-	// (6) 컨테이너 생성/시작.
+	// (6) 컨테이너 생성/시작 (결정 6: SDK 그대로 유지).
 	cid, err := r.docker.ContainerCreate(ctx, CreateOptions{
 		Image:       tag,
 		Labels:      map[string]string{"hub-preview-id": pid},
 		HostPort:    hostPort,
-		ExposedPort: 80,
+		ExposedPort: resolvedPort,
 	})
 	if err != nil {
 		return r.fail(ctx, pid, "container_create", err)

@@ -29,6 +29,7 @@ type Client struct {
 	backoff *Backoff
 
 	runner *Runner
+	holder *Holder // Phase 4: AGENT_CONFIG / CONFIG_UPDATE 적용 대상.
 
 	connMu sync.Mutex
 	conn   *websocket.Conn
@@ -42,6 +43,9 @@ func NewClient(cfg Config, logger *slog.Logger) *Client {
 
 // SetRunner 는 JOB_ASSIGN/TEARDOWN 처리 runner 를 주입한다.
 func (c *Client) SetRunner(r *Runner) { c.runner = r }
+
+// SetHolder 는 AGENT_CONFIG / CONFIG_UPDATE 수신 시 Replace 할 Holder 를 주입한다 (Phase 4).
+func (c *Client) SetHolder(h *Holder) { c.holder = h }
 
 // SendStatusUpdate 는 현재 conn 으로 STATUS_UPDATE envelope 를 송신한다.
 // Runner.HubSender 인터페이스 만족.
@@ -234,6 +238,21 @@ func (c *Client) dispatchMessage(ctx context.Context, env protocol.Envelope) {
 				c.logger.Warn("runner_teardown_failed", "preview_id", data.PreviewID, "err", err.Error())
 			}
 		}()
+	case protocol.TypeAgentConfig, protocol.TypeConfigUpdate:
+		// Phase 4: Hub 가 보낸 빌드 설정을 Holder 에 atomic 적용.
+		// 두 메시지의 페이로드 스키마는 동일 (결정 8). 의도가 다를 뿐.
+		var data protocol.AgentConfigData
+		if err := env.Decode(&data); err != nil {
+			c.logger.Warn("agent_config_decode_failed", "type", env.Type, "err", err.Error())
+			return
+		}
+		if c.holder == nil {
+			c.logger.Debug("agent_config_no_holder", "type", env.Type)
+			return
+		}
+		c.holder.Replace(data)
+		c.logger.Info("agent_config_applied",
+			"type", env.Type, "commands", len(data.BuildCommands), "port", data.ContainerPort)
 	default:
 		c.logger.Debug("ws_message_received", "type", env.Type)
 	}
