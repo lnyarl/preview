@@ -1,11 +1,13 @@
 // 이 파일의 책임:
-//   - Hub 데몬 기동 와이어링: DB open -> ResetAllOnline -> HTTP 서버 Run -> signal shutdown.
+//   - Hub 데몬 기동 와이어링: Config.Validate -> DB open -> ResetAllOnline ->
+//     HTTP 서버 Run -> signal shutdown.
 //
 // 이 패키지는 wiring 예외로서 internal/db/sqlite 를 직접 import 할 수 있다(결정 13).
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/signal"
 	"syscall"
@@ -21,6 +23,14 @@ func runDaemon() error {
 	cfg := hub.DefaultConfig()
 	logger := hub.NewLogger(cfg.LogLevel)
 
+	// Phase 2: 필수 설정(GITHUB_WEBHOOK_SECRET) 부재 시 fail-fast (NF-Security-3).
+	if err := cfg.Validate(); err != nil {
+		if errors.Is(err, hub.ErrWebhookSecretMissing) {
+			logger.Error("config_invalid", "err", err.Error())
+		}
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -33,8 +43,9 @@ func runDaemon() error {
 	}()
 
 	agentStore := sqlitestore.NewAgentStore(db)
+	previewStore := sqlitestore.NewPreviewStore(db)
 
-	// 결정 11: Hub 기동 bulk offline 리셋 (리스크 4 완화).
+	// 결정 11(Phase 1): Hub 기동 bulk offline 리셋 (리스크 4 완화).
 	resetCount, err := agentStore.ResetAllOnline(ctx)
 	if err != nil {
 		return fmt.Errorf("reset online: %w", err)
@@ -48,7 +59,8 @@ func runDaemon() error {
 	reg := hub.NewConnRegistry()
 	admin := hub.NewAdminHandler(agentStore, tg, logger)
 	ws := hub.NewWSHandler(agentStore, reg, logger)
+	webhook := hub.NewWebhookHandler(previewStore, cfg.WebhookSecret, logger)
 
-	srv := hub.NewServer(cfg, admin, ws, reg, logger)
+	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger)
 	return srv.Run(ctx)
 }
