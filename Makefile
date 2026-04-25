@@ -54,8 +54,8 @@ test-e2e:
 
 ## 빌드 검사.
 build:
-	go build -o bin/hub ./cmd/hub
-	go build -o bin/agent ./cmd/agent
+	go build -o bin/hub.exe ./cmd/hub
+	go build -o bin/agent.exe ./cmd/agent
 
 ## 포맷.
 fmt:
