@@ -1,138 +1,187 @@
 {{define "content"}}
+<style>
+/* ── OS Tabs ─────────────────────────────────────────────── */
+.os-tabs > input[type="radio"] { display: none; }
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--pico-muted-border-color, #d0d0d0);
+  margin-bottom: 1.5rem;
+}
+.tab-bar label {
+  padding: 0.5rem 1.4rem;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  font-weight: 500;
+  color: var(--pico-muted-color, #666);
+  transition: background 0.12s;
+  user-select: none;
+}
+.tab-bar label:hover { background: var(--pico-card-sectionning-background-color, #f4f4f4); }
+
+#os-linux:checked ~ .tab-bar label[for="os-linux"],
+#os-mac:checked   ~ .tab-bar label[for="os-mac"],
+#os-win:checked   ~ .tab-bar label[for="os-win"] {
+  background: var(--pico-background-color, #fff);
+  border-color: var(--pico-muted-border-color, #d0d0d0);
+  border-bottom-color: var(--pico-background-color, #fff);
+  color: var(--pico-color, #111);
+  margin-bottom: -2px;
+}
+
+.tab-panels > section { display: none; }
+#os-linux:checked ~ .tab-panels > section:nth-child(1) { display: block; }
+#os-mac:checked   ~ .tab-panels > section:nth-child(2) { display: block; }
+#os-win:checked   ~ .tab-panels > section:nth-child(3) { display: block; }
+
+/* ── Copy button ─────────────────────────────────────────── */
+.code-wrap { position: relative; margin: 0.5rem 0 1rem; }
+.code-wrap pre { margin: 0; padding-right: 4.5rem; }
+.copy-btn {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.5rem;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+  border: 1px solid var(--pico-muted-border-color, #ccc);
+  border-radius: 4px;
+  background: var(--pico-card-background-color, #f8f8f8);
+  color: var(--pico-muted-color, #555);
+  line-height: 1.6;
+}
+.copy-btn:hover { background: var(--pico-primary-background, #e8f0fe); color: var(--pico-primary, #1a73e8); }
+.copy-btn.ok { color: #2e7d32; border-color: #2e7d32; }
+
+/* ── Misc ────────────────────────────────────────────────── */
+.arch-label { font-size: 0.82rem; font-weight: 600; color: var(--pico-muted-color, #666); margin: 0.8rem 0 0.2rem; }
+</style>
+
+<script>
+function cp(btn) {
+  var text = btn.closest('.code-wrap').querySelector('code').innerText;
+  navigator.clipboard.writeText(text).then(function() {
+    btn.textContent = '✓ Copied';
+    btn.classList.add('ok');
+    setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 2000);
+  });
+}
+</script>
+
+{{/* ── 제목 ── */}}
 <hgroup>
   <h1>Agent <strong>{{.Name}}</strong> 등록 완료</h1>
-  <p>아래 단계를 따라 Agent를 실행하세요.</p>
 </hgroup>
 
 {{/* ── 토큰 ── */}}
 <article>
   <header>⚠️ 토큰은 지금만 표시됩니다</header>
-  <p>이 페이지를 벗어나면 다시 볼 수 없습니다. 토큰을 잃어버리면 Agent를 삭제하고 다시 생성해야 합니다.</p>
-  <label for="token-input"><strong>Token</strong></label>
-  <input id="token-input" type="text" readonly value="{{.Token}}"
-         onclick="this.select()" style="font-family:monospace;cursor:pointer"
-         title="클릭해서 선택 후 복사">
+  <p>이 페이지를 벗어나면 다시 볼 수 없습니다. 잃어버리면 Agent를 삭제하고 다시 생성해야 합니다.</p>
+  <div class="code-wrap">
+    <button class="copy-btn" onclick="cp(this)">Copy</button>
+    <pre><code>{{.Token}}</code></pre>
+  </div>
 </article>
 
 <hr>
 
-{{/* ── Step 1: 바이너리 준비 ── */}}
-<details open>
-  <summary><strong>Step 1</strong> — Agent 바이너리 받기</summary>
+{{/* ── OS 탭 ── */}}
+<div class="os-tabs">
+  <input type="radio" id="os-linux" name="os" checked>
+  <input type="radio" id="os-mac"   name="os">
+  <input type="radio" id="os-win"   name="os">
 
-  {{if .AgentDownloadURL}}
-  <p>Agent를 실행할 머신에서 아래 명령으로 바이너리를 다운로드합니다.</p>
+  <div class="tab-bar">
+    <label for="os-linux">🐧 Linux</label>
+    <label for="os-mac">🍎 macOS</label>
+    <label for="os-win">🪟 Windows</label>
+  </div>
 
-  <details open>
-    <summary>Linux (amd64)</summary>
-<pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-amd64 -o agent
+  <div class="tab-panels">
+
+    {{/* ── Linux ── */}}
+    <section>
+      {{if .AgentDownloadURL}}
+      <h4>Step 1 — 바이너리 다운로드</h4>
+
+      <p class="arch-label">x86_64 (amd64)</p>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-amd64 -o agent
 chmod +x agent</code></pre>
-  </details>
+      </div>
 
-  <details>
-    <summary>Linux (arm64 — Raspberry Pi, AWS Graviton 등)</summary>
-<pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-arm64 -o agent
+      <p class="arch-label">ARM64 (Raspberry Pi, AWS Graviton 등)</p>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-arm64 -o agent
 chmod +x agent</code></pre>
-  </details>
+      </div>
+      {{end}}
 
-  <details>
-    <summary>macOS (Apple Silicon — M1/M2/M3)</summary>
-<pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-arm64 -o agent
-chmod +x agent</code></pre>
-  </details>
-
-  <details>
-    <summary>macOS (Intel)</summary>
-<pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-amd64 -o agent
-chmod +x agent</code></pre>
-  </details>
-
-  <details>
-    <summary>Windows (PowerShell)</summary>
-<pre><code>Invoke-WebRequest -Uri {{.AgentDownloadURL}}/agent-windows-amd64.exe `
-  -OutFile agent.exe</code></pre>
-  </details>
-
-  {{end}}
-</details>
-
-<hr>
-
-{{/* ── Step 2: 저장소 접근 설정 ── */}}
-<details open>
-  <summary><strong>Step 2</strong> — 빌드할 저장소 접근 설정 (GitHub)</summary>
-  <p>Agent는 PR이 열릴 때마다 지정한 저장소를 <code>git clone</code>합니다.<br>
-  <strong>Public 저장소</strong>라면 별도 설정 없이 URL만 지정하면 됩니다.<br>
-  <strong>Private 저장소</strong>라면 아래 중 하나를 선택하세요.</p>
-
-  <details>
-    <summary>방법 A — URL에 PAT 포함 (간단)</summary>
-    <p>GitHub Personal Access Token을 URL에 직접 포함합니다.</p>
-    <p><strong>PAT 발급 (최소 권한):</strong></p>
-    <ol>
-      <li>GitHub → Settings → Developer settings → <strong>Fine-grained tokens</strong> → Generate new token</li>
-      <li><strong>Repository access</strong>: Only select repositories → 빌드할 저장소 선택</li>
-      <li><strong>Permissions → Repository permissions → Contents</strong>: <code>Read-only</code></li>
-      <li>나머지는 모두 No access — Generate token</li>
-    </ol>
-    <p>발급받은 토큰을 아래 형식으로 저장소 URL에 포함하세요:</p>
-<pre><code>https://&lt;GitHub 사용자명&gt;:&lt;PAT 토큰&gt;@github.com/owner/repo.git
-
-# 예시
-https://lnyarl:ghp_XXXXXXXXXXXX@github.com/lnyarl/myapp.git</code></pre>
-    <p>이 URL을 Step 3의 <code>--repo-url</code>에 사용합니다.</p>
-  </details>
-
-  <details>
-    <summary>방법 B — SSH 키 사용</summary>
-    <p>Agent 머신에 GitHub SSH 키가 설정되어 있다면 SSH URL을 사용합니다.</p>
-<pre><code>git@github.com:owner/repo.git</code></pre>
-    <p>SSH 키 설정이 없다면:</p>
-<pre><code># 키 생성
-ssh-keygen -t ed25519 -C "preview-agent"
-
-# 공개 키 확인 후 GitHub → Settings → SSH keys 에 추가
-cat ~/.ssh/id_ed25519.pub</code></pre>
-  </details>
-</details>
-
-<hr>
-
-{{/* ── Step 3: Agent 실행 ── */}}
-<details open>
-  <summary><strong>Step 3</strong> — Agent 실행</summary>
-  <p>
-    Hub 주소: <code>{{.HubHost}}</code><br>
-    Agent 이름: <code>{{.Name}}</code>
-  </p>
-
-  <details open>
-    <summary>Linux / macOS</summary>
-<pre><code>./agent start \
+      <h4>Step 2 — Agent 실행</h4>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>./agent start \
   --hub-url=ws://{{.HubHost}}/agent/ws \
   --token={{.Token}} \
   --repo-url=https://github.com/owner/repo.git \
   --advertise-host=$(hostname -I | awk '{print $1}') \
   --label env=local</code></pre>
-    <p><small>
-      <code>--advertise-host</code>: Hub가 컨테이너로 프록시할 때 사용할 이 머신의 IP.<br>
-      <code>$(hostname -I | awk '{print $1}')</code>로 자동 감지하거나 직접 입력하세요.
-    </small></p>
-  </details>
+      </div>
+      <p><small><code>--advertise-host</code>: Hub가 컨테이너에 접속할 때 사용하는 이 머신의 IP. 자동 감지가 안 되면 직접 입력하세요.</small></p>
+    </section>
 
-  <details>
-    <summary>macOS (hostname 방식)</summary>
-<pre><code>./agent start \
+    {{/* ── macOS ── */}}
+    <section>
+      {{if .AgentDownloadURL}}
+      <h4>Step 1 — 바이너리 다운로드</h4>
+
+      <p class="arch-label">Apple Silicon (M1 / M2 / M3)</p>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-arm64 -o agent
+chmod +x agent</code></pre>
+      </div>
+
+      <p class="arch-label">Intel</p>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-amd64 -o agent
+chmod +x agent</code></pre>
+      </div>
+      {{end}}
+
+      <h4>Step 2 — Agent 실행</h4>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>./agent start \
   --hub-url=ws://{{.HubHost}}/agent/ws \
   --token={{.Token}} \
   --repo-url=https://github.com/owner/repo.git \
   --advertise-host=$(ipconfig getifaddr en0) \
   --label env=local</code></pre>
-  </details>
+      </div>
+      <p><small>Wi-Fi가 아닌 경우 <code>en0</code>을 <code>en1</code> 등으로 변경하거나 IP를 직접 입력하세요.</small></p>
+    </section>
 
-  <details>
-    <summary>Windows (PowerShell)</summary>
-<pre><code>$IP = (Get-NetIPAddress -AddressFamily IPv4 `
+    {{/* ── Windows ── */}}
+    <section>
+      {{if .AgentDownloadURL}}
+      <h4>Step 1 — 바이너리 다운로드 (PowerShell)</h4>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>Invoke-WebRequest -Uri {{.AgentDownloadURL}}/agent-windows-amd64.exe `
+  -OutFile agent.exe</code></pre>
+      </div>
+      {{end}}
+
+      <h4>Step 2 — Agent 실행 (PowerShell)</h4>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>$IP = (Get-NetIPAddress -AddressFamily IPv4 `
        -InterfaceAlias "Ethernet*","Wi-Fi*" |
        Select-Object -First 1).IPAddress
 
@@ -142,45 +191,56 @@ cat ~/.ssh/id_ed25519.pub</code></pre>
   --repo-url=https://github.com/owner/repo.git `
   --advertise-host=$IP `
   --label env=local</code></pre>
+      </div>
+    </section>
+
+  </div>{{/* tab-panels */}}
+</div>{{/* os-tabs */}}
+
+<hr>
+
+{{/* ── 저장소 접근 설정 ── */}}
+<details>
+  <summary><strong>Private 저장소 접근 설정 (GitHub)</summary>
+  <p>Public 저장소라면 위 <code>--repo-url</code>에 그대로 사용합니다.<br>
+  Private 저장소라면 아래 중 하나를 선택하세요.</p>
+
+  <details>
+    <summary>방법 A — URL에 Personal Access Token 포함 (간단)</summary>
+    <p><strong>PAT 발급:</strong> GitHub → Settings → Developer settings →
+    <strong>Fine-grained tokens</strong> → Generate new token</p>
+    <ul>
+      <li><strong>Repository access</strong>: 해당 저장소만 선택</li>
+      <li><strong>Permissions → Contents</strong>: <code>Read-only</code></li>
+      <li>나머지는 모두 No access</li>
+    </ul>
+    <div class="code-wrap">
+      <button class="copy-btn" onclick="cp(this)">Copy</button>
+      <pre><code>https://&lt;GitHub_사용자명&gt;:&lt;PAT&gt;@github.com/owner/repo.git</code></pre>
+    </div>
   </details>
 
   <details>
-    <summary>여러 라벨 지정</summary>
-<pre><code># 여러 --label 플래그를 반복 사용
-./agent start \
-  --hub-url=ws://{{.HubHost}}/agent/ws \
-  --token={{.Token}} \
-  --repo-url=https://github.com/owner/repo.git \
-  --label env=home \
-  --label arch=amd64 \
-  --label owner=alice</code></pre>
-    <p><small>GitHub PR에 동일한 라벨을 붙이면 해당 라벨을 가진 Agent에만 배정됩니다.</small></p>
-  </details>
+    <summary>방법 B — SSH 키</summary>
+    <div class="code-wrap">
+      <button class="copy-btn" onclick="cp(this)">Copy</button>
+      <pre><code># 키 생성 (없는 경우)
+ssh-keygen -t ed25519 -C "preview-agent"
 
-  <details>
-    <summary>주요 옵션</summary>
-    <table>
-      <thead><tr><th>플래그</th><th>기본값</th><th>설명</th></tr></thead>
-      <tbody>
-        <tr><td><code>--hub-url</code></td><td>—</td><td>Hub WebSocket 주소 (필수)</td></tr>
-        <tr><td><code>--token</code></td><td>—</td><td>이 페이지의 토큰 (필수)</td></tr>
-        <tr><td><code>--repo-url</code></td><td>—</td><td>빌드할 저장소 URL (필수)</td></tr>
-        <tr><td><code>--advertise-host</code></td><td>127.0.0.1</td><td>Hub → 컨테이너 접속 시 사용할 IP</td></tr>
-        <tr><td><code>--label</code></td><td>없음</td><td>라우팅 라벨 (반복 가능)</td></tr>
-        <tr><td><code>--max-jobs</code></td><td>1</td><td>동시 처리 최대 Job 수</td></tr>
-        <tr><td><code>--work-dir</code></td><td>~/.hub-agent</td><td>워크 디렉토리</td></tr>
-      </tbody>
-    </table>
+# 공개 키 → GitHub Settings → SSH keys 에 추가
+cat ~/.ssh/id_ed25519.pub</code></pre>
+    </div>
+    <p>SSH URL 형식: <code>git@github.com:owner/repo.git</code></p>
   </details>
 </details>
 
 <hr>
 
-{{/* ── Step 4: 확인 ── */}}
+{{/* ── 확인 ── */}}
 <details>
-  <summary><strong>Step 4</strong> — Agent 연결 확인</summary>
-  <p>Agent를 실행한 뒤 이 대시보드의 <a href="/admin/agents">Agent 목록</a>에서
-  <strong>{{.Name}}</strong>의 상태가 <code>online</code>으로 바뀌는지 확인하세요.</p>
+  <summary><strong>연결 확인</strong></summary>
+  <p>Agent를 실행한 뒤 <a href="/admin/agents">Agent 목록</a>에서
+  <code>{{.Name}}</code>의 상태가 <strong>online</strong>으로 바뀌는지 확인하세요.</p>
   <p>그 다음 GitHub에서 PR을 열면 자동으로 빌드가 시작됩니다.</p>
 </details>
 
