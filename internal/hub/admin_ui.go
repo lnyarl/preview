@@ -29,11 +29,12 @@ var viewsFS embed.FS
 
 // AdminUIHandler 는 /admin/* SSR 핸들러 묶음.
 type AdminUIHandler struct {
-	AgentStore   store.AgentStore
-	PreviewStore store.PreviewStore
-	TokenGen     *token.Generator
-	Logger       *slog.Logger
-	Registry     *ConnRegistry // 옵션 — online 카운트 정확도 향상.
+	AgentStore       store.AgentStore
+	PreviewStore     store.PreviewStore
+	TokenGen         *token.Generator
+	Logger           *slog.Logger
+	Registry         *ConnRegistry // 옵션 — online 카운트 정확도 향상.
+	AgentDownloadURL string        // 빈 값이면 소스 빌드 안내, 설정 시 다운로드 링크 표시.
 
 	tmpls map[string]*template.Template
 	now   func() time.Time
@@ -302,10 +303,11 @@ func (h *AdminUIHandler) CreateAgentForm(w http.ResponseWriter, r *http.Request)
 // ---------- Token display ----------
 
 type tokenView struct {
-	Title    string
-	Name     string
-	Token    string
-	HubHost  string // e.g. "localhost:3000" — Agent 실행 명령에 사용
+	Title           string
+	Name            string
+	Token           string
+	HubHost         string // e.g. "localhost:3000" — Agent 실행 명령에 사용
+	AgentDownloadURL string // 빈 값이면 소스 빌드 안내 표시
 }
 
 func (h *AdminUIHandler) agentToken(w http.ResponseWriter, r *http.Request) {
@@ -321,7 +323,8 @@ func (h *AdminUIHandler) agentToken(w http.ResponseWriter, r *http.Request) {
 		host = "localhost:3000"
 	}
 	h.renderHTML(w, http.StatusOK, "token.gohtml",
-		tokenView{Title: "Agent Setup", Name: name, Token: tok, HubHost: host})
+		tokenView{Title: "Agent Setup", Name: name, Token: tok, HubHost: host,
+			AgentDownloadURL: h.AgentDownloadURL})
 }
 
 // ---------- Agent delete (SSR) ----------

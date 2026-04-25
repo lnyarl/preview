@@ -30,8 +30,9 @@ type Config struct {
 	PreviewRepoURL    string        // 단일 레포 가정(결정 9). webhook 의 repo_full_name 을 git URL 로 변환.
 	ReconcileInterval   time.Duration // reconciler 주기 (기본 60s).
 	StaleAssignedAfter time.Duration // assigned 임계 (기본 5m).
-	AdminPassword     string        // Phase 3: /admin/* Basic Auth 비밀번호. 빈 값 = 인증 disable + WARN.
-	DevAgentToken     string        // 설정 시 시작 시 "dev-agent" 자동 등록 (개발 전용).
+	AdminPassword      string        // Phase 3: /admin/* Basic Auth 비밀번호. 빈 값 = 인증 disable + WARN.
+	DevAgentToken      string        // 설정 시 시작 시 "dev-agent" 자동 등록 (개발 전용).
+	AgentDownloadURL   string        // Agent 바이너리 다운로드 base URL. 설정 시 토큰 페이지에 다운로드 링크 표시.
 }
 
 // DefaultConfig 는 env 를 읽어 기본값이 채워진 Config 를 만든다.
@@ -49,6 +50,7 @@ func DefaultConfig() Config {
 		StaleAssignedAfter: envDuration("STALE_ASSIGNED_AFTER", 5*time.Minute),
 		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
 		DevAgentToken:      os.Getenv("DEV_AGENT_TOKEN"),
+		AgentDownloadURL:   os.Getenv("AGENT_DOWNLOAD_URL"),
 	}
 }
 

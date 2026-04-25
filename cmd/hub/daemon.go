@@ -101,6 +101,7 @@ func runDaemon(args []string) error {
 	webhook := hub.NewWebhookHandler(previewStore, cfg.WebhookSecret, logger)
 	adminUI := hub.NewAdminUIHandler(agentStore, previewStore, tg, logger)
 	adminUI.SetRegistry(reg)
+	adminUI.AgentDownloadURL = cfg.AgentDownloadURL
 	admin.SetUI(adminUI)
 	webhook.SetUI(adminUI)
 	ws.SetPreviewStore(previewStore)
