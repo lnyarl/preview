@@ -1,28 +1,4 @@
 services:
-  hub:
-    build:
-      context: .
-      dockerfile: Dockerfile.hub
-    command: ["hub"]           # 데몬 실행 (마이그레이션 없이)
-    ports:
-      - "${HUB_PORT:-3000}:3000"
-    environment:
-      HUB_ADDR: ":3000"
-      DATABASE_URL: "sqlite:///data/hub.db"
-      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET 환경변수를 설정하세요}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin}"
-      PREVIEW_BASE_DOMAIN: "${PREVIEW_BASE_DOMAIN:-localhost}"
-      PREVIEW_REPO_URL: "${PREVIEW_REPO_URL:-}"
-      LOG_LEVEL: "${LOG_LEVEL:-info}"
-    volumes:
-      - hub-data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
   migrate:
     build:
       context: .
@@ -32,9 +8,34 @@ services:
       DATABASE_URL: "sqlite:///data/hub.db"
     volumes:
       - hub-data:/data
-    # migrate 가 성공하면 종료 — hub 는 migrate 완료 후 시작
-    depends_on: {}
-    profiles: []              # migrate 는 hub 시작 전 자동 실행되지 않음
+
+  hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    ports:
+      - "${HUB_ADDR:-3000}:3000"
+    environment:
+      HUB_ADDR: ":3000"
+      DATABASE_URL: "sqlite:///data/hub.db"
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      PREVIEW_BASE_DOMAIN: "${PREVIEW_BASE_DOMAIN:-localhost}"
+      PREVIEW_REPO_URL: "${PREVIEW_REPO_URL:-}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      RECONCILE_INTERVAL: "${RECONCILE_INTERVAL:-1m}"
+      STALE_ASSIGNED_AFTER: "${STALE_ASSIGNED_AFTER:-5m}"
+    volumes:
+      - hub-data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
   agent:
     build:
@@ -44,14 +45,13 @@ services:
       - agent
       - start
       - --hub-url=ws://hub:3000/agent/ws
-      - --token=${AGENT_TOKEN:?AGENT_TOKEN 환경변수를 설정하세요 (hub 에서 발급)}
-      - --repo-url=${AGENT_REPO_URL:?AGENT_REPO_URL 환경변수를 설정하세요}
+      - --token=${HUB_TOKEN}
+      - --repo-url=${AGENT_REPO_URL}
       - --advertise-host=${AGENT_ADVERTISE_HOST:-host.docker.internal}
-      - --work-dir=/workspace
-    environment:
-      DOCKER_HOST: "${DOCKER_HOST:-unix:///var/run/docker.sock}"
+      - --work-dir=${AGENT_WORK_DIR:-/workspace}
+      - --prefetch-interval=${AGENT_PREFETCH_INTERVAL:-5m}
+      - --max-jobs=${AGENT_MAX_JOBS:-1}
     volumes:
-      # 호스트 Docker 소켓 마운트 — Agent 가 호스트 Docker 데몬으로 컨테이너를 빌드/실행
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-workspace:/workspace
     depends_on:
