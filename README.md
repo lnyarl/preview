@@ -67,10 +67,6 @@ make tag v=1.0.0
 
 태그를 푸시하면 GitHub Actions가 자동으로 전 플랫폼 바이너리를 빌드해 Release에 업로드합니다.
 
-## 저장소 요구사항
-
-빌드 대상 저장소 루트에 `Dockerfile`이 있어야 하고, 컨테이너는 포트 80을 노출해야 합니다.
-
 ## 기술 스택
 
 Go 1.22 · SQLite (CGO-free) · html/template · coder/websocket · Docker SDK
