@@ -80,6 +80,18 @@ func (r *ConnRegistry) connFor(agentID string) *wsConn {
 	return r.conns[agentID]
 }
 
+// OnlineAgentIDs 는 현재 online 인 agent ID 의 집합을 복사본으로 반환한다.
+// Reconciler 등이 online 여부를 판단할 때 mu 에 직접 접근하지 않도록 제공.
+func (r *ConnRegistry) OnlineAgentIDs() map[string]bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]bool, len(r.conns))
+	for id := range r.conns {
+		out[id] = true
+	}
+	return out
+}
+
 // WSJobSender 는 Dispatcher.JobSender 를 ConnRegistry 위에 구현한다.
 // resolveRepo 는 preview.RepoFullName → git URL 변환 (multi-repo 대비, 본 Phase 는 단일).
 type WSJobSender struct {
