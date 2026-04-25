@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.hub
-    command: ["hub", "migrate", "up"]
+    command: ["migrate", "up"]
     environment:
       DATABASE_URL: "sqlite:///data/hub.db"
     volumes:
@@ -44,7 +44,6 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     command:
-      - agent
       - start
       - --hub-url=ws://hub:3000/agent/ws
       - --token=dev-local-token-do-not-use-in-prod
