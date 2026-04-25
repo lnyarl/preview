@@ -42,11 +42,13 @@ type StatusUpdateHandler interface {
 
 // WSHandler 는 /agent/ws 엔드포인트를 처리한다.
 type WSHandler struct {
-	Store        store.AgentStore
-	Registry     *ConnRegistry
-	Logger       *slog.Logger
-	Ready        ReadyHandler        // nil 허용 (Phase 1 호환).
-	StatusUpdate StatusUpdateHandler // nil 허용.
+	Store          store.AgentStore
+	Registry       *ConnRegistry
+	Logger         *slog.Logger
+	Ready          ReadyHandler        // nil 허용 (Phase 1 호환).
+	StatusUpdate   StatusUpdateHandler // nil 허용.
+	PreviewStore   store.PreviewStore  // Phase 3: HELLO sync 용. nil 시 sync 스킵.
+	TeardownSender TeardownSender      // Phase 3: orphan container 정리용. nil 시 send 스킵.
 }
 
 // NewWSHandler 는 WSHandler 를 조립한다.
@@ -59,6 +61,13 @@ func (h *WSHandler) SetReady(r ReadyHandler) { h.Ready = r }
 
 // SetStatusUpdate 는 STATUS_UPDATE 콜백을 설정한다 (Phase 2: preview status updater).
 func (h *WSHandler) SetStatusUpdate(s StatusUpdateHandler) { h.StatusUpdate = s }
+
+// SetPreviewStore 는 HELLO 동기화 시 사용할 PreviewStore 를 주입한다 (Phase 3 §5-1).
+func (h *WSHandler) SetPreviewStore(s store.PreviewStore) { h.PreviewStore = s }
+
+// SetTeardownSender 는 HELLO 동기화 시 orphan container 에 JOB_TEARDOWN 을 송신할
+// TeardownSender 를 주입한다 (Phase 3 §5-1).
+func (h *WSHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender = s }
 
 // Register 는 mux 에 GET /agent/ws 라우트를 붙인다.
 func (h *WSHandler) Register(mux *http.ServeMux) {
@@ -136,7 +145,7 @@ func (h *WSHandler) session(parentCtx context.Context, conn *websocket.Conn, age
 
 	// HELLO 수신 (TCP read timeout 으로 안전망).
 	helloCtx, helloCancel := context.WithTimeout(connCtx, 5*time.Second)
-	helloData, err := readHello(helloCtx, conn)
+	helloData, helloRaw, err := readHello(helloCtx, conn)
 	helloCancel()
 	if err != nil {
 		h.Logger.Warn("ws_hello_failed", "agent_id", agent.ID, "err", err.Error())
@@ -177,6 +186,10 @@ func (h *WSHandler) session(parentCtx context.Context, conn *websocket.Conn, age
 		h.markOffline(agent.ID)
 		return
 	}
+
+	// Phase 3: HELLO 동기화 (running_previews 비교) — 별도 goroutine.
+	// 실패는 로그만, session 진행에 영향 없음.
+	go h.syncOnHello(connCtx, agent.ID, helloData, helloRaw)
 
 	// 2 goroutine: readLoop + pingTicker.
 	go h.readLoop(connCtx, cancel, conn, agent.ID)
@@ -281,24 +294,113 @@ func (h *WSHandler) pingTicker(ctx context.Context, cancel context.CancelFunc, c
 	}
 }
 
-// readHello 는 첫 메시지가 HELLO 인지 확인하고 HelloData 를 반환한다.
-func readHello(ctx context.Context, conn *websocket.Conn) (protocol.HelloData, error) {
+// readHello 는 첫 메시지가 HELLO 인지 확인하고 HelloData + raw envelope.Data 를 반환한다.
+// raw 는 hasRunningPreviewsKey 헬퍼가 키 부재 검출에 사용 (결정 8).
+func readHello(ctx context.Context, conn *websocket.Conn) (protocol.HelloData, json.RawMessage, error) {
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		return protocol.HelloData{}, err
+		return protocol.HelloData{}, nil, err
 	}
 	var env protocol.Envelope
 	if err := json.Unmarshal(data, &env); err != nil {
-		return protocol.HelloData{}, err
+		return protocol.HelloData{}, nil, err
 	}
 	if env.Type != protocol.TypeHello {
-		return protocol.HelloData{}, errors.New("first message must be HELLO")
+		return protocol.HelloData{}, nil, errors.New("first message must be HELLO")
 	}
 	var hello protocol.HelloData
 	if err := env.Decode(&hello); err != nil {
-		return protocol.HelloData{}, err
+		return protocol.HelloData{}, nil, err
 	}
-	return hello, nil
+	return hello, env.Data, nil
+}
+
+// hasRunningPreviewsKey 는 envelope.Data 의 raw JSON 에서 "running_previews" 키
+// 존재 여부를 확인한다 (결정 8 / §5-3 / 리스크 6 완화). map decode 로 substring
+// false-positive 방지.
+func hasRunningPreviewsKey(data json.RawMessage) bool {
+	if len(data) == 0 {
+		return false
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	_, ok := m["running_previews"]
+	return ok
+}
+
+// syncOnHello 는 HELLO 수신 직후 Agent 의 RunningPreviews 와 DB 의 active preview
+// 집합을 비교한다 (Phase 3 §5-3, 결정 8/9). 비교 결과:
+//   - Agent − DB (orphan): JOB_TEARDOWN 송신 + reconcile_hello_orphan_container 로그.
+//   - DB − Agent (lost):  UpdateStatus(*→failed, "agent restart lost container")
+//                         + reconcile_hello_lost_container 로그. ErrStaleState 는 무시.
+//
+// 레거시 Agent (running_previews 키 부재) 는 비교 SKIP + WARN reconcile_hello_legacy_agent.
+// PreviewStore 가 nil 이면 (테스트) 즉시 반환.
+func (h *WSHandler) syncOnHello(ctx context.Context, agentID string, hello protocol.HelloData, raw json.RawMessage) {
+	if h.PreviewStore == nil {
+		return
+	}
+	if !hasRunningPreviewsKey(raw) {
+		h.Logger.Warn("reconcile_hello_legacy_agent", "agent_id", agentID)
+		return
+	}
+
+	agentSet := make(map[string]struct{}, len(hello.RunningPreviews))
+	for _, id := range hello.RunningPreviews {
+		agentSet[id] = struct{}{}
+	}
+
+	dbList, err := h.PreviewStore.ListByAgent(ctx, agentID,
+		[]string{"assigned", "building", "running", "teardown"})
+	if err != nil {
+		h.Logger.Warn("reconcile_hello_listbyagent_failed",
+			"agent_id", agentID, "err", err.Error())
+		return
+	}
+	dbSet := make(map[string]store.Preview, len(dbList))
+	for _, p := range dbList {
+		dbSet[p.ID] = p
+	}
+
+	// Agent − DB: orphan container — JOB_TEARDOWN 송신.
+	for id := range agentSet {
+		if _, ok := dbSet[id]; !ok {
+			if h.TeardownSender == nil {
+				h.Logger.Info("reconcile_hello_orphan_container",
+					"preview_id", id, "agent_id", agentID, "note", "no_teardown_sender")
+				continue
+			}
+			if err := h.TeardownSender.SendTeardown(ctx, agentID, id); err != nil {
+				h.Logger.Warn("reconcile_hello_teardown_send_failed",
+					"preview_id", id, "agent_id", agentID, "err", err.Error())
+			} else {
+				h.Logger.Info("reconcile_hello_orphan_container",
+					"preview_id", id, "agent_id", agentID)
+			}
+		}
+	}
+
+	// DB − Agent: lost container — UpdateStatus(*→failed).
+	now := time.Now().UTC()
+	for id, p := range dbSet {
+		if _, ok := agentSet[id]; ok {
+			continue
+		}
+		if uerr := h.PreviewStore.UpdateStatus(ctx, id, p.Status, "failed",
+			"agent restart lost container", now,
+			store.PreviewFields{}); uerr != nil {
+			if errors.Is(uerr, store.ErrStaleState) {
+				continue
+			}
+			h.Logger.Warn("reconcile_hello_lost_failed",
+				"preview_id", id, "err", uerr.Error())
+			continue
+		}
+		h.Logger.Info("reconcile_hello_lost_container",
+			"preview_id", id, "agent_id", agentID)
+	}
 }
 
 // writeEnvelope 는 Envelope 를 JSON binary 로 WS 메시지에 싣는다.
