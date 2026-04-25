@@ -21,8 +21,9 @@ import (
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 0 {
-		if err := runDaemon(); err != nil {
+	// 인자 없음 또는 첫 인자가 플래그(- 시작)면 데몬으로 라우팅.
+	if len(args) == 0 || (len(args) > 0 && len(args[0]) > 0 && args[0][0] == '-') {
+		if err := runDaemon(args); err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}

@@ -1,5 +1,6 @@
 // 이 파일의 책임:
-//   - Hub 데몬 기동 와이어링: Config.Validate -> DB open -> ResetAllOnline ->
+//   - Hub 데몬 기동 와이어링: Config.Validate -> DB open -> Reset 캠페인 ->
+//     Dispatcher/StatusUpdater + ProxyMiddleware + Reconciler 조립 ->
 //     HTTP 서버 Run -> signal shutdown.
 //
 // 이 패키지는 wiring 예외로서 internal/db/sqlite 를 직접 import 할 수 있다(결정 13).
@@ -8,9 +9,11 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
@@ -18,9 +21,25 @@ import (
 )
 
 // runDaemon 은 Hub HTTP+WS 데몬을 기동한다.
+// args 에서 플래그(--reconcile-interval / --stale-after) 를 파싱한다.
 // 에러가 발생하면 non-zero exit 를 위해 반환.
-func runDaemon() error {
+func runDaemon(args []string) error {
+	fs := flag.NewFlagSet("hub", flag.ContinueOnError)
+	var reconcileInterval time.Duration
+	var staleAssignedAfter time.Duration
+	fs.DurationVar(&reconcileInterval, "reconcile-interval", 0, "reconciler tick interval (0=use env/default)")
+	fs.DurationVar(&staleAssignedAfter, "stale-assigned-after", 0, "stale assigned threshold (0=use env/default)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	cfg := hub.DefaultConfig()
+	if reconcileInterval > 0 {
+		cfg.ReconcileInterval = reconcileInterval
+	}
+	if staleAssignedAfter > 0 {
+		cfg.StaleAssignedAfter = staleAssignedAfter
+	}
 	logger := hub.NewLogger(cfg.LogLevel)
 
 	// Phase 2: 필수 설정(GITHUB_WEBHOOK_SECRET) 부재 시 fail-fast (NF-Security-3).
@@ -85,6 +104,19 @@ func runDaemon() error {
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)
 
-	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger)
+	// Phase 2 Step 3: ProxyMiddleware + Reconciler.
+	pm := hub.NewProxyMiddleware(previewStore, cfg.PreviewBaseDomain, logger)
+	webhook.SetTeardownSender(jobSender)
+	webhook.SetCacheNotifier(pm)
+	statusUpdater.SetCacheNotifier(pm)
+
+	reconciler := hub.NewReconciler(previewStore, reg, logger)
+	reconciler.Start(ctx, cfg.ReconcileInterval, cfg.StaleAssignedAfter)
+	logger.Info("reconciler_started",
+		"interval", cfg.ReconcileInterval.String(),
+		"stale_assigned_after", cfg.StaleAssignedAfter.String(),
+	)
+
+	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, pm)
 	return srv.Run(ctx)
 }

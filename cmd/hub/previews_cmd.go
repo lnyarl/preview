@@ -10,16 +10,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
 	"github.com/lnyarl/preview/internal/store"
 )
 
 // errPreviewsUsage 는 exit code 2 로 변환된다 (인자 오류).
-var errPreviewsUsage = errors.New("usage: hub previews list | show <id>")
+var errPreviewsUsage = errors.New("usage: hub previews list | show <id> | seed-stale [--pr=N]")
 
 func runPreviews(args []string) error {
 	if len(args) == 0 {
@@ -57,6 +60,28 @@ func runPreviews(args []string) error {
 			return fmt.Errorf("get preview: %w", err)
 		}
 		return json.NewEncoder(os.Stdout).Encode(hub.PreviewToView(*p))
+	case "seed-stale":
+		// evaluator/F-S3-10 검증용: status='assigned', updated_at=10 분 전인 row INSERT.
+		seedFS := flag.NewFlagSet("seed-stale", flag.ContinueOnError)
+		prNum := seedFS.Int("pr", 1, "PR number to seed")
+		if err := seedFS.Parse(args[1:]); err != nil {
+			return err
+		}
+		id := uuid.NewString()
+		now := time.Now().UTC()
+		_, err = db.ExecContext(ctx,
+			`INSERT INTO previews (id, repo_full_name, pr_number, commit_sha, branch, status, labels, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, "fixture/repo", int64(*prNum), "aabbcc", "pr-fixture",
+			"assigned", "{}",
+			now.Add(-15*time.Minute).Format(time.RFC3339Nano),
+			now.Add(-10*time.Minute).Format(time.RFC3339Nano),
+		)
+		if err != nil {
+			return fmt.Errorf("seed-stale: %w", err)
+		}
+		fmt.Fprintf(os.Stdout, `{"preview_id": %q, "status": "assigned"}`+"\n", id)
+		return nil
 	default:
 		return errPreviewsUsage
 	}
