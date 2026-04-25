@@ -30,6 +30,7 @@ type AdminHandler struct {
 	Store    store.AgentStore
 	TokenGen *token.Generator
 	Logger   *slog.Logger
+	UI       *AdminUIHandler // Phase 3: SSR 분기 핸들러 (옵션, nil 이면 JSON-only).
 }
 
 // NewAdminHandler 는 AdminHandler 를 조립한다.
@@ -37,12 +38,33 @@ func NewAdminHandler(s store.AgentStore, tg *token.Generator, logger *slog.Logge
 	return &AdminHandler{Store: s, TokenGen: tg, Logger: logger}
 }
 
+// SetUI 는 SSR 핸들러를 주입한다 (Phase 3, 결정 6).
+// nil 이면 기존 JSON-only 동작.
+func (h *AdminHandler) SetUI(ui *AdminUIHandler) { h.UI = ui }
+
 // Register 는 mux 에 /health, /admin/agents, /admin/agents/{id} 라우트를 붙인다.
+// Phase 3: GET /admin/agents 와 POST /admin/agents 는 Accept-header 분기 (결정 6).
 func (h *AdminHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /health", h.health)
 	mux.HandleFunc("POST /admin/agents", h.createAgent)
 	mux.HandleFunc("GET /admin/agents", h.listAgents)
 	mux.HandleFunc("DELETE /admin/agents/{id}", h.deleteAgent)
+}
+
+// RegisterAdminOnly 는 mux 에 /admin/* 라우트만 등록한다 (server.go 의 adminMux 분리용).
+// /health 는 별도로 mainMux 에 register.
+func (h *AdminHandler) RegisterAdminOnly(mux *http.ServeMux) {
+	mux.HandleFunc("POST /admin/agents", h.createAgent)
+	mux.HandleFunc("GET /admin/agents", h.listAgents)
+	mux.HandleFunc("DELETE /admin/agents/{id}", h.deleteAgent)
+}
+
+// Health 는 /health 엔드포인트의 핸들러 export — server.go 가 mainMux 에 직접 등록.
+func (h *AdminHandler) Health(w http.ResponseWriter, r *http.Request) { h.health(w, r) }
+
+// wantsJSON 는 Accept 헤더에 application/json 이 포함되었는지 판단.
+func wantsJSON(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "application/json")
 }
 
 // createAgentRequest / response 는 §5-2 Admin API body schema.
@@ -72,6 +94,11 @@ func (h *AdminHandler) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *AdminHandler) createAgent(w http.ResponseWriter, r *http.Request) {
+	// Phase 3: Accept != application/json 이면 SSR 폼 흐름 (결정 6).
+	if !wantsJSON(r) && h.UI != nil {
+		h.UI.CreateAgentForm(w, r)
+		return
+	}
 	var req createAgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_name", "request body must be JSON")
@@ -117,6 +144,11 @@ func (h *AdminHandler) createAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) listAgents(w http.ResponseWriter, r *http.Request) {
+	// Phase 3: Accept != application/json 이면 SSR (결정 6).
+	if !wantsJSON(r) && h.UI != nil {
+		h.UI.AgentsList(w, r)
+		return
+	}
 	list, err := h.Store.List(r.Context())
 	if err != nil {
 		h.Logger.Error("agent_list_failed", "err", err.Error())

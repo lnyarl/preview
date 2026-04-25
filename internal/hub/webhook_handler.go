@@ -75,8 +75,12 @@ type WebhookHandler struct {
 	Logger         *slog.Logger
 	TeardownSender TeardownSender       // optional, nil-safe
 	CacheNotifier  PreviewCacheNotifier // optional, nil-safe
+	UI             *AdminUIHandler      // Phase 3: SSR 분기 (옵션, 결정 6)
 	now            func() time.Time
 }
+
+// SetUI 는 SSR 핸들러를 주입한다 (Phase 3, 결정 6).
+func (h *WebhookHandler) SetUI(ui *AdminUIHandler) { h.UI = ui }
 
 // NewWebhookHandler 는 WebhookHandler 를 조립한다. secret 은 비어있지 않다고 가정.
 func NewWebhookHandler(s store.PreviewStore, secret string, logger *slog.Logger) *WebhookHandler {
@@ -371,6 +375,11 @@ func findPreviewByRepoPR(ctx context.Context, s store.PreviewStore, repo string,
 }
 
 func (h *WebhookHandler) listPreviews(w http.ResponseWriter, r *http.Request) {
+	// Phase 3: SSR 분기 (Accept != application/json) — 결정 6.
+	if !wantsJSON(r) && h.UI != nil {
+		h.UI.PreviewsList(w, r)
+		return
+	}
 	list, err := h.Store.ListAll(r.Context())
 	if err != nil {
 		h.Logger.Error("preview_list_failed", "err", err.Error())
@@ -385,6 +394,11 @@ func (h *WebhookHandler) listPreviews(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebhookHandler) getPreview(w http.ResponseWriter, r *http.Request) {
+	// Phase 3: SSR 분기 (Accept != application/json) — 결정 6.
+	if !wantsJSON(r) && h.UI != nil {
+		h.UI.PreviewDetail(w, r)
+		return
+	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		writeError(w, http.StatusNotFound, "not_found", "preview id required")
