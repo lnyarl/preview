@@ -140,3 +140,19 @@ func (s *WSJobSender) SendTeardown(ctx context.Context, agentID string, previewI
 	b, _ := json.Marshal(env)
 	return c.conn.Write(ctx, websocket.MessageText, b)
 }
+
+// SendAgentConfig 는 agentID 의 WS 에 CONFIG_UPDATE 를 송신한다 (Phase 4 §4-6).
+// HELLO 직후 1회 송신은 WSHandler 가 직접 수행 (레지스트리 등록 시점 race 회피).
+// 본 메서드는 Admin UI 의 폼 저장 → 즉시 푸시 경로에서만 사용된다.
+func (s *WSJobSender) SendAgentConfig(ctx context.Context, agentID string, cfg protocol.AgentConfigData) error {
+	c := s.Registry.connFor(agentID)
+	if c == nil {
+		return fmt.Errorf("ws_job_sender: agent %s not connected", agentID)
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeConfigUpdate, cfg)
+	if err != nil {
+		return fmt.Errorf("ws_job_sender: agent_config envelope: %w", err)
+	}
+	b, _ := json.Marshal(env)
+	return c.conn.Write(ctx, websocket.MessageText, b)
+}
