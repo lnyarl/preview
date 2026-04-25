@@ -94,6 +94,80 @@ make test
 | Agent kill 후 offline 전환 | SIGTERM/SIGKILL 후 10초 이내 상태가 `offline` |
 | Hub graceful shutdown | SIGINT 후 5초 이내 close frame(1001) 송신 |
 
+## Phase 2 검증
+
+Hub 포트는 기본 `:3000`. GitHub 웹훅 시뮬레이션에 `openssl` 또는 미리 계산한 HMAC 을 사용한다.
+
+### S1 — Webhook → DB
+
+```bash
+export PORT=3000
+export SECRET=testsecret
+
+# Hub 기동
+GITHUB_WEBHOOK_SECRET=$SECRET go run ./cmd/hub &
+
+# 웹훅 HMAC 계산 후 전송 (opened)
+PAYLOAD='{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc","ref":"feat"},"labels":[]},"repository":{"full_name":"owner/repo"}}'
+SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
+curl -s -X POST http://localhost:$PORT/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -H "X-Hub-Signature-256: sha256=$SIG" \
+  -d "$PAYLOAD"
+# 응답: {"preview_id":"...","status":"queued"}
+
+# DB 확인
+go run ./cmd/hub previews list | jq .
+```
+
+### S2 — Dispatcher + Agent Job 실행
+
+```bash
+# Agent 등록 + 토큰 발급
+TOKEN=$(curl -s -X POST http://localhost:$PORT/admin/agents \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"local-agent","labels":{"env":"local"}}' | jq -r .token)
+
+# Agent 기동 (Docker 필요)
+go run ./cmd/agent start \
+  --hub-url ws://localhost:$PORT/agent/ws \
+  --token "$TOKEN" \
+  --label env=local \
+  --repo-url https://github.com/owner/repo.git \
+  --advertise-host 127.0.0.1
+
+# 상태 확인: building → running
+go run ./cmd/hub previews list | jq '.[].status'
+```
+
+### S3 — Reverse Proxy + Teardown
+
+```bash
+# running 상태 preview 에 프록시 접근
+PREVIEW_ID=$(go run ./cmd/hub previews list | jq -r '.[0].id')
+curl --resolve "pr-1.preview.localhost:$PORT:127.0.0.1" \
+  http://pr-1.preview.localhost:$PORT/
+
+# PR closed → JOB_TEARDOWN 전송 + Agent 컨테이너 정리
+PAYLOAD_CLOSE='{"action":"closed","pull_request":{"number":1,"head":{"sha":"abc","ref":"feat"},"labels":[]},"repository":{"full_name":"owner/repo"}}'
+SIG_CLOSE=$(printf '%s' "$PAYLOAD_CLOSE" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
+curl -s -X POST http://localhost:$PORT/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -H "X-Hub-Signature-256: sha256=$SIG_CLOSE" \
+  -d "$PAYLOAD_CLOSE"
+# 응답: {"preview_id":"...","status":"teardown"}
+
+# Reconciliation 단축 테스트
+go run ./cmd/hub previews seed-stale --pr=99
+GITHUB_WEBHOOK_SECRET=$SECRET go run ./cmd/hub \
+  --reconcile-interval=2s --stale-assigned-after=3s &
+sleep 5
+go run ./cmd/hub previews list | jq '.[] | select(.pr_number==99) | .status'
+# 출력: "queued"
+```
+
 ## 왜 SQLite로 시작하는가
 
 - 단일 파일, 별도 서버 프로세스 없음 → 셀프호스팅 도입 장벽이 낮다.
