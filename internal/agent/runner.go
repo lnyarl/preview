@@ -13,11 +13,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
+	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -141,20 +141,28 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return r.fail(ctx, pid, "repocache_checkout", err)
 	}
 
-	// (3) Dockerfile 존재 확인.
-	if _, err := os.Stat(filepath.Join(worktree, "Dockerfile")); err != nil {
-		return r.fail(ctx, pid, "dockerfile_missing", err)
-	}
-
-	// (4) docker build.
+	// (3) preview.yml 로드 (없으면 기본값: docker build + port 80).
 	tag := "preview-" + pid + ":latest"
-	logs, err := r.docker.ImageBuild(ctx, worktree, BuildOptions{Tag: tag})
-	if err != nil {
-		return r.fail(ctx, pid, "image_build", err)
-	}
-	if logs != nil {
-		_, _ = io.Copy(io.Discard, logs)
-		_ = logs.Close()
+	cfg := loadPreviewConfig(worktree, tag)
+	r.logger.Info("agent_preview_config", "preview_id", pid,
+		"build_steps", len(cfg.Build), "port", cfg.Port)
+
+	// (4) 빌드 명령 실행 (preview.yml 의 build: 항목 순서대로).
+	buildEnv := append(os.Environ(),
+		"PREVIEW_ID="+pid,
+		"PREVIEW_IMAGE="+tag,
+		"PREVIEW_SHA="+msg.CommitSHA,
+		"PREVIEW_BRANCH="+msg.Branch,
+	)
+	for i, cmd := range cfg.Build {
+		r.logger.Info("agent_build_step", "preview_id", pid, "step", i+1, "cmd", cmd)
+		c := exec.CommandContext(ctx, "sh", "-c", cmd)
+		c.Dir = worktree
+		c.Env = buildEnv
+		if out, err := c.CombinedOutput(); err != nil {
+			return r.fail(ctx, pid, fmt.Sprintf("build_step_%d", i+1),
+				fmt.Errorf("%s: %w\n%s", cmd, err, strings.TrimSpace(string(out))))
+		}
 	}
 
 	// (5) 동적 포트 할당.
@@ -163,12 +171,12 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return r.fail(ctx, pid, "allocate_port", err)
 	}
 
-	// (6) 컨테이너 생성/시작.
+	// (6) 컨테이너 생성/시작 (preview.yml 의 port: 를 ExposedPort 로 사용).
 	cid, err := r.docker.ContainerCreate(ctx, CreateOptions{
 		Image:       tag,
 		Labels:      map[string]string{"hub-preview-id": pid},
 		HostPort:    hostPort,
-		ExposedPort: 80,
+		ExposedPort: cfg.Port,
 	})
 	if err != nil {
 		return r.fail(ctx, pid, "container_create", err)
