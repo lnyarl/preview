@@ -46,8 +46,24 @@ func (q *Queries) DeleteAgent(ctx context.Context, id string) error {
 	return err
 }
 
+const getAgentBuildConfig = `-- name: GetAgentBuildConfig :one
+SELECT build_commands, container_port FROM agents WHERE id = ?
+`
+
+type GetAgentBuildConfigRow struct {
+	BuildCommands sql.NullString `json:"build_commands"`
+	ContainerPort sql.NullInt64  `json:"container_port"`
+}
+
+func (q *Queries) GetAgentBuildConfig(ctx context.Context, id string) (GetAgentBuildConfigRow, error) {
+	row := q.db.QueryRowContext(ctx, getAgentBuildConfig, id)
+	var i GetAgentBuildConfigRow
+	err := row.Scan(&i.BuildCommands, &i.ContainerPort)
+	return i, err
+}
+
 const getAgentByID = `-- name: GetAgentByID :one
-SELECT id, name, token_hash, labels, status, last_seen_at, created_at FROM agents WHERE id = ?
+SELECT id, name, token_hash, labels, status, last_seen_at, created_at, build_commands, container_port FROM agents WHERE id = ?
 `
 
 func (q *Queries) GetAgentByID(ctx context.Context, id string) (Agent, error) {
@@ -61,12 +77,14 @@ func (q *Queries) GetAgentByID(ctx context.Context, id string) (Agent, error) {
 		&i.Status,
 		&i.LastSeenAt,
 		&i.CreatedAt,
+		&i.BuildCommands,
+		&i.ContainerPort,
 	)
 	return i, err
 }
 
 const getAgentByName = `-- name: GetAgentByName :one
-SELECT id, name, token_hash, labels, status, last_seen_at, created_at FROM agents WHERE name = ?
+SELECT id, name, token_hash, labels, status, last_seen_at, created_at, build_commands, container_port FROM agents WHERE name = ?
 `
 
 func (q *Queries) GetAgentByName(ctx context.Context, name string) (Agent, error) {
@@ -80,12 +98,14 @@ func (q *Queries) GetAgentByName(ctx context.Context, name string) (Agent, error
 		&i.Status,
 		&i.LastSeenAt,
 		&i.CreatedAt,
+		&i.BuildCommands,
+		&i.ContainerPort,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, name, token_hash, labels, status, last_seen_at, created_at FROM agents ORDER BY created_at DESC
+SELECT id, name, token_hash, labels, status, last_seen_at, created_at, build_commands, container_port FROM agents ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
@@ -105,6 +125,8 @@ func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
 			&i.Status,
 			&i.LastSeenAt,
 			&i.CreatedAt,
+			&i.BuildCommands,
+			&i.ContainerPort,
 		); err != nil {
 			return nil, err
 		}
@@ -117,6 +139,24 @@ func (q *Queries) ListAgents(ctx context.Context) ([]Agent, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const saveAgentBuildConfig = `-- name: SaveAgentBuildConfig :exec
+UPDATE agents
+SET build_commands = NULLIF(?1, ''),
+    container_port = NULLIF(?2, 0)
+WHERE id = ?3
+`
+
+type SaveAgentBuildConfigParams struct {
+	RawCommands interface{} `json:"raw_commands"`
+	Port        interface{} `json:"port"`
+	ID          string      `json:"id"`
+}
+
+func (q *Queries) SaveAgentBuildConfig(ctx context.Context, arg SaveAgentBuildConfigParams) error {
+	_, err := q.db.ExecContext(ctx, saveAgentBuildConfig, arg.RawCommands, arg.Port, arg.ID)
+	return err
 }
 
 const updateAgentStatus = `-- name: UpdateAgentStatus :exec

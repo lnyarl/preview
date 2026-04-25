@@ -9,13 +9,15 @@ import (
 )
 
 type Agent struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	TokenHash  string         `json:"token_hash"`
-	Labels     string         `json:"labels"`
-	Status     string         `json:"status"`
-	LastSeenAt sql.NullString `json:"last_seen_at"`
-	CreatedAt  string         `json:"created_at"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	TokenHash     string         `json:"token_hash"`
+	Labels        string         `json:"labels"`
+	Status        string         `json:"status"`
+	LastSeenAt    sql.NullString `json:"last_seen_at"`
+	CreatedAt     string         `json:"created_at"`
+	BuildCommands sql.NullString `json:"build_commands"`
+	ContainerPort sql.NullInt64  `json:"container_port"`
 }
 
 type Preview struct {

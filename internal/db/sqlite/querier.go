@@ -14,6 +14,7 @@ type Querier interface {
 	CreateAgent(ctx context.Context, arg CreateAgentParams) error
 	DeleteAgent(ctx context.Context, id string) error
 	FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error)
+	GetAgentBuildConfig(ctx context.Context, id string) (GetAgentBuildConfigRow, error)
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
 	GetAgentByName(ctx context.Context, name string) (Agent, error)
 	GetPreviewByID(ctx context.Context, id string) (Preview, error)
@@ -27,6 +28,7 @@ type Querier interface {
 	ListRunningPreviewsByAgent(ctx context.Context, assignedAgentID sql.NullString) ([]Preview, error)
 	ListStaleAssignedPreviews(ctx context.Context, updatedAt string) ([]Preview, error)
 	ResetAllAssignedPreviews(ctx context.Context, updatedAt string) (int64, error)
+	SaveAgentBuildConfig(ctx context.Context, arg SaveAgentBuildConfigParams) error
 	UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) error
 	UpdatePreviewStatus(ctx context.Context, arg UpdatePreviewStatusParams) error
 	UpdatePreviewStatusFields(ctx context.Context, arg UpdatePreviewStatusFieldsParams) (int64, error)
