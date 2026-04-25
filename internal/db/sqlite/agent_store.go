@@ -236,29 +236,35 @@ func rowToAgent(r Agent) (*store.Agent, error) {
 	return a, nil
 }
 
-func encodeLabels(m map[string]string) (string, error) {
-	if m == nil {
-		return "{}", nil
+// encodeLabels 는 라벨 슬라이스를 JSON 문자열로 직렬화한다.
+// nil 또는 빈 슬라이스는 "[]" 로 정규화하여 NULL/empty 분기 없이 일관된 입력값을 유지한다.
+func encodeLabels(s []string) (string, error) {
+	if len(s) == 0 {
+		return "[]", nil
 	}
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(s)
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
 }
 
-func decodeLabels(s string) (map[string]string, error) {
+// decodeLabels 는 DB 의 JSON 문자열을 라벨 슬라이스로 역직렬화한다.
+// 빈 문자열·null 은 빈 슬라이스([]string{}) 로 정규화한다.
+// 기존 schema 가 map(`{}`) 으로 저장된 row 와 마주칠 가능성이 있으면 `[]` 만 허용한다 —
+// 본 변경은 in-memory 도메인 타입만 바꾸고 wire/storage 표현은 모두 슬라이스 JSON.
+func decodeLabels(s string) ([]string, error) {
 	if s == "" {
-		return map[string]string{}, nil
+		return []string{}, nil
 	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(s), &m); err != nil {
+	var arr []string
+	if err := json.Unmarshal([]byte(s), &arr); err != nil {
 		return nil, err
 	}
-	if m == nil {
-		m = map[string]string{}
+	if arr == nil {
+		arr = []string{}
 	}
-	return m, nil
+	return arr, nil
 }
 
 func nullTime(t *time.Time) sql.NullString {

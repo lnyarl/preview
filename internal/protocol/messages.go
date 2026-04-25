@@ -50,11 +50,14 @@ type Envelope struct {
 // Phase 3 추가: RunningPreviews 는 omitempty 미적용 (결정 8 / §5-2).
 // 레거시 Agent (Phase 2) 는 이 키 자체를 보내지 않으므로 Hub 측이
 // hasRunningPreviewsKey 헬퍼로 부재를 구분해 동기화 SKIP.
+//
+// Labels 는 단순 값 슬라이스 (예: ["home", "us-east"]). 키-값 형태가 아니므로
+// 단순한 set-membership 매칭으로 라우팅한다.
 type HelloData struct {
-	Version         string            `json:"version"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	AdvertiseHost   string            `json:"advertise_host,omitempty"`
-	RunningPreviews []string          `json:"running_previews"`
+	Version         string   `json:"version"`
+	Labels          []string `json:"labels,omitempty"`
+	AdvertiseHost   string   `json:"advertise_host,omitempty"`
+	RunningPreviews []string `json:"running_previews"`
 }
 
 // WelcomeData 는 Hub 가 HELLO 에 대한 응답으로 보내는 본문.
@@ -83,12 +86,12 @@ type ReadyData struct {
 // JobAssignData 는 Hub 가 Claim 후 Agent 에게 전달하는 작업 본문.
 // Labels 는 preview 의 라벨 echo (Agent 측 진단용).
 type JobAssignData struct {
-	PreviewID    string            `json:"preview_id"`
-	RepoFullName string            `json:"repo_full_name"`
-	RepoURL      string            `json:"repo_url"`
-	CommitSHA    string            `json:"commit_sha"`
-	Branch       string            `json:"branch,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"`
+	PreviewID    string   `json:"preview_id"`
+	RepoFullName string   `json:"repo_full_name"`
+	RepoURL      string   `json:"repo_url"`
+	CommitSHA    string   `json:"commit_sha"`
+	Branch       string   `json:"branch,omitempty"`
+	Labels       []string `json:"labels,omitempty"`
 }
 
 // StatusUpdateData 는 Agent 가 building → running → done|failed 전이 시

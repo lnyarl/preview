@@ -45,18 +45,18 @@ func runAgents(args []string) error {
 
 	// admin_handler.AgentView 와 동일한 JSON shape 을 유지해야 함.
 	type agentView struct {
-		ID         string            `json:"id"`
-		Name       string            `json:"name"`
-		Labels     map[string]string `json:"labels"`
-		Status     string            `json:"status"`
-		LastSeenAt *string           `json:"last_seen_at"`
-		CreatedAt  string            `json:"created_at"`
+		ID         string   `json:"id"`
+		Name       string   `json:"name"`
+		Labels     []string `json:"labels"`
+		Status     string   `json:"status"`
+		LastSeenAt *string  `json:"last_seen_at"`
+		CreatedAt  string   `json:"created_at"`
 	}
 	views := make([]agentView, 0, len(list))
 	for _, a := range list {
 		labels := a.Labels
 		if labels == nil {
-			labels = map[string]string{}
+			labels = []string{}
 		}
 		v := agentView{
 			ID:        a.ID,

@@ -30,9 +30,9 @@
         <td>{{.LabelsString}}</td>
         <td>{{.RunningCount}}</td>
         <td>{{.LastSeenString}}</td>
-        <td>
-          <a href="/admin/agents/{{.ID}}" role="button" class="outline">Configure</a>
-          <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline">
+        <td style="display: flex; flex-direction: row; flex-wrap: nowrap;">
+          <a href="/admin/agents/{{.ID}}" role="button" class="outline" style="height: fit-content; margin-right: 10px;">Configure</a>
+           <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline">
             <button type="submit" class="secondary outline">Delete</button>
           </form>
         </td>
@@ -47,8 +47,8 @@
   <form method="POST" action="/admin/agents">
     <label for="name">Name</label>
     <input type="text" id="name" name="name" placeholder="agent-home" required>
-    <label for="labels">Labels (k=v,k2=v2)</label>
-    <input type="text" id="labels" name="labels" placeholder="env=home">
+    <label for="labels">Labels (comma-separated values)</label>
+    <input type="text" id="labels" name="labels" placeholder="home, us-east">
     <button type="submit">Submit</button>
   </form>
 </section>

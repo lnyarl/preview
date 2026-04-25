@@ -69,8 +69,8 @@ func wantsJSON(r *http.Request) bool {
 
 // createAgentRequest / response 는 §5-2 Admin API body schema.
 type createAgentRequest struct {
-	Name   string            `json:"name"`
-	Labels map[string]string `json:"labels,omitempty"`
+	Name   string   `json:"name"`
+	Labels []string `json:"labels,omitempty"`
 }
 
 type createAgentResponse struct {
@@ -81,12 +81,12 @@ type createAgentResponse struct {
 
 // AgentView 는 GET 응답용 DTO. token_hash 필드를 일체 노출하지 않는다.
 type AgentView struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Labels     map[string]string `json:"labels"`
-	Status     string            `json:"status"`
-	LastSeenAt *string           `json:"last_seen_at"`
-	CreatedAt  string            `json:"created_at"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Labels     []string `json:"labels"`
+	Status     string   `json:"status"`
+	LastSeenAt *string  `json:"last_seen_at"`
+	CreatedAt  string   `json:"created_at"`
 }
 
 func (h *AdminHandler) health(w http.ResponseWriter, _ *http.Request) {
@@ -116,7 +116,7 @@ func (h *AdminHandler) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	labels := req.Labels
 	if labels == nil {
-		labels = map[string]string{}
+		labels = []string{}
 	}
 	a := store.Agent{
 		ID:        uuid.NewString(),
@@ -185,7 +185,7 @@ func (h *AdminHandler) deleteAgent(w http.ResponseWriter, r *http.Request) {
 func toView(a store.Agent) AgentView {
 	labels := a.Labels
 	if labels == nil {
-		labels = map[string]string{}
+		labels = []string{}
 	}
 	v := AgentView{
 		ID:        a.ID,

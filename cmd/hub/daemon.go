@@ -165,7 +165,7 @@ func provisionDevAgent(ctx context.Context, s store.AgentStore, tg *token.Genera
 		ID:        "dev-agent-fixed-id-000000000001",
 		Name:      "dev-agent",
 		TokenHash: hash,
-		Labels:    map[string]string{},
+		Labels:    []string{},
 		Status:    "offline",
 		CreatedAt: time.Now().UTC(),
 	}); err != nil {

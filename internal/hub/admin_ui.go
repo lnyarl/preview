@@ -247,38 +247,22 @@ func (h *AdminUIHandler) agentsList(w http.ResponseWriter, r *http.Request) {
 		agentsView{Title: "Agents", Agents: rows})
 }
 
-// labelsToString converts labels map → "k=v,k2=v2" deterministic string.
-func labelsToString(m map[string]string) string {
-	if len(m) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, k+"="+m[k])
-	}
-	return strings.Join(parts, ",")
+// labelsToString 은 라벨 슬라이스를 ", " 로 join 한 표시용 문자열로 변환한다.
+// 빈 슬라이스 / nil 모두 "" 를 돌려준다.
+func labelsToString(labels []string) string {
+	return strings.Join(labels, ", ")
 }
 
-// parseLabelsForm parses "k=v,k2=v2" form value → map.
-func parseLabelsForm(s string) map[string]string {
-	out := map[string]string{}
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
+// parseLabelsForm 은 "a, b, c" 형태의 form 값을 라벨 슬라이스로 변환한다.
+// 빈 토큰은 제거하고 trim 한 결과만 반환한다. 빈 입력은 nil 슬라이스 (caller 가 정규화).
+func parseLabelsForm(raw string) []string {
+	var result []string
+	for _, part := range strings.Split(raw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			result = append(result, v)
 		}
-		idx := strings.IndexByte(part, '=')
-		if idx <= 0 {
-			continue
-		}
-		out[part[:idx]] = part[idx+1:]
 	}
-	return out
+	return result
 }
 
 // CreateAgentForm 는 SSR 폼 POST 처리. AdminHandler 가 Accept-header 분기에서 호출.
@@ -642,6 +626,12 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 		cmds = []string{}
 		port = 0
 	}
+	// 빈 설정일 때는 기본 빌드 명령을 textarea 에 미리 채워 사용자가 시작점을 갖도록 한다.
+	// 저장된 명령이 하나라도 있으면 그대로 표시. 변경 A (placeholder 제거).
+	runCommandsText := strings.Join(cmds, "\n")
+	if runCommandsText == "" {
+		runCommandsText = "docker build -t preview-$PREVIEW_ID:latest ."
+	}
 	view := agentDetailView{
 		Title:           "Agent " + a.Name,
 		AgentID:         a.ID,
@@ -649,7 +639,7 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 		Status:          a.Status,
 		LabelsString:    labelsToString(a.Labels),
 		CreatedString:   a.CreatedAt.UTC().Format(time.RFC3339),
-		RunCommandsText: strings.Join(cmds, "\n"),
+		RunCommandsText: runCommandsText,
 		ContainerPort:   port,
 	}
 	if a.LastSeenAt != nil {

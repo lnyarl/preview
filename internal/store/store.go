@@ -14,11 +14,13 @@ import (
 
 // Agent 는 도메인 엔티티. sqlc 생성 구조체를 그대로 노출하지 않는 이유는
 // 이식성 경계면을 sqlc 런타임 구현 세부에 결합시키지 않기 위함이다.
+//
+// Labels 는 단순 값 슬라이스. 라우팅 매칭은 set-membership 으로 수행한다.
 type Agent struct {
 	ID         string
 	Name       string
 	TokenHash  string
-	Labels     map[string]string
+	Labels     []string
 	Status     string
 	LastSeenAt *time.Time
 	CreatedAt  time.Time
@@ -60,7 +62,7 @@ type Preview struct {
 	AgentHost       *string
 	AgentPort       *int
 	PublicURL       *string
-	Labels          map[string]string
+	Labels          []string
 	ErrorMessage    *string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time

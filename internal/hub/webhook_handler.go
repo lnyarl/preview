@@ -108,21 +108,21 @@ func (h *WebhookHandler) SetCacheNotifier(n PreviewCacheNotifier) { h.CacheNotif
 
 // PreviewView 는 /admin/previews 응답 DTO. nullable 필드는 *string/*int 로 명시.
 type PreviewView struct {
-	ID              string            `json:"id"`
-	RepoFullName    string            `json:"repo_full_name"`
-	PrNumber        int               `json:"pr_number"`
-	CommitSha       string            `json:"commit_sha"`
-	Branch          string            `json:"branch"`
-	Status          string            `json:"status"`
-	AssignedAgentID *string           `json:"assigned_agent_id"`
-	ContainerID     *string           `json:"container_id"`
-	AgentHost       *string           `json:"agent_host"`
-	AgentPort       *int              `json:"agent_port"`
-	PublicURL       *string           `json:"public_url"`
-	Labels          map[string]string `json:"labels"`
-	ErrorMessage    *string           `json:"error_message"`
-	CreatedAt       string            `json:"created_at"`
-	UpdatedAt       string            `json:"updated_at"`
+	ID              string   `json:"id"`
+	RepoFullName    string   `json:"repo_full_name"`
+	PrNumber        int      `json:"pr_number"`
+	CommitSha       string   `json:"commit_sha"`
+	Branch          string   `json:"branch"`
+	Status          string   `json:"status"`
+	AssignedAgentID *string  `json:"assigned_agent_id"`
+	ContainerID     *string  `json:"container_id"`
+	AgentHost       *string  `json:"agent_host"`
+	AgentPort       *int     `json:"agent_port"`
+	PublicURL       *string  `json:"public_url"`
+	Labels          []string `json:"labels"`
+	ErrorMessage    *string  `json:"error_message"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 // PreviewToView 는 도메인 Preview 를 HTTP 응답 DTO 로 변환한다.
@@ -130,7 +130,7 @@ type PreviewView struct {
 func PreviewToView(p store.Preview) PreviewView {
 	labels := p.Labels
 	if labels == nil {
-		labels = map[string]string{}
+		labels = []string{}
 	}
 	return PreviewView{
 		ID:              p.ID,
@@ -424,17 +424,16 @@ func computeHMACSHA256(secret, payload []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// labelsFromPR 은 GitHub PR labels 배열을 map[string]string 로 변환한다.
-// Phase 2 의 라벨 매칭(결정 4) 에서 key=value 형태가 표준이지만, GitHub label 은
-// 단순 문자열이므로 본 Step 에서는 name=name 매핑(존재 자체를 표현)으로 둔다.
-// Step 2 의 dispatcher 는 이 형태를 그대로 사용한다.
-func labelsFromPR(p pullRequestEvent) map[string]string {
+// labelsFromPR 은 GitHub PR labels 배열을 라벨 문자열 슬라이스로 변환한다.
+// GitHub label name 그대로를 값으로 보존한다. 빈 PR 라벨은 빈 슬라이스([]string{}).
+// dispatcher 는 set-membership 매칭으로 이 슬라이스를 사용한다.
+func labelsFromPR(p pullRequestEvent) []string {
 	if len(p.PullRequest.Labels) == 0 {
-		return map[string]string{}
+		return []string{}
 	}
-	out := make(map[string]string, len(p.PullRequest.Labels))
+	out := make([]string, 0, len(p.PullRequest.Labels))
 	for _, l := range p.PullRequest.Labels {
-		out[l.Name] = l.Name
+		out = append(out, l.Name)
 	}
 	return out
 }
