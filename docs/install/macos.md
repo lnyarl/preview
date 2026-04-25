@@ -103,8 +103,7 @@ agent start \
   --hub-url=ws://localhost:3000/agent/ws \
   --token=agt_여기에_토큰_입력 \
   --repo-url=https://github.com/org/repo.git \
-  --advertise-host=$(ipconfig getifaddr en0) \
-  --label local
+  --advertise-host=$(ipconfig getifaddr en0)
 ```
 
 ### 4. 시작 시 자동 실행 (launchd)
@@ -125,8 +124,6 @@ cat > ~/Library/LaunchAgents/com.preview.agent.plist << 'EOF'
     <string>--token=agt_여기에_토큰_입력</string>
     <string>--repo-url=https://github.com/org/repo.git</string>
     <string>--advertise-host=이_머신의_IP</string>
-    <string>--label</string>
-    <string>local</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

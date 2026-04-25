@@ -96,15 +96,14 @@ C:\preview\agent.exe start `
   --hub-url=ws://localhost:3000/agent/ws `
   --token=agt_여기에_토큰_입력 `
   --repo-url=https://github.com/org/repo.git `
-  --advertise-host=$IP `
-  --label local
+  --advertise-host=$IP
 ```
 
 ### 4. 시작 시 자동 실행 (NSSM)
 
 ```powershell
 nssm install PreviewAgent C:\preview\agent.exe
-nssm set PreviewAgent AppParameters "start --hub-url=ws://localhost:3000/agent/ws --token=agt_TOKEN --repo-url=https://github.com/org/repo.git --advertise-host=이_머신의_IP --label env=local"
+nssm set PreviewAgent AppParameters "start --hub-url=ws://localhost:3000/agent/ws --token=agt_TOKEN --repo-url=https://github.com/org/repo.git --advertise-host=이_머신의_IP"
 nssm set PreviewAgent Start SERVICE_AUTO_START
 nssm start PreviewAgent
 ```

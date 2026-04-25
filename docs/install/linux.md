@@ -112,8 +112,7 @@ ExecStart=/usr/local/bin/agent start \
   --hub-url=wss://yourdomain.com/agent/ws \
   --token=agt_여기에_토큰_입력 \
   --repo-url=https://github.com/org/repo.git \
-  --advertise-host=이_머신의_IP \
-  --label prod
+  --advertise-host=이_머신의_IP
 Restart=always
 RestartSec=10
 

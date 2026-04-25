@@ -86,8 +86,7 @@ Agent를 실행할 머신(Docker가 설치된 곳)에서:
 go run ./cmd/agent start \
   --hub-url=ws://HUB주소:3000/agent/ws \
   --token=agt_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
-  --repo-url=https://github.com/owner/repo.git \
-  --label env=home
+  --repo-url=https://github.com/owner/repo.git
 ```
 
 #### Private 리포지토리 인증
@@ -112,7 +111,6 @@ go run ./cmd/agent start \
 | `--hub-url` | Hub WebSocket 주소 (`ws://` 또는 `wss://`) |
 | `--token` | 등록 시 발급받은 Agent 토큰 |
 | `--repo-url` | 빌드할 Git 리포지토리 URL |
-| `--label key=value` | 라벨 (여러 개 지정 가능: `--label env=home --label arch=amd64`) |
 | `--advertise-host` | Hub가 컨테이너 접속 시 사용할 이 머신의 IP (기본: `127.0.0.1`) |
 | `--work-dir` | 워크 디렉토리 경로 (기본: `~/.hub-agent`) |
 | `--max-jobs` | 동시 처리할 최대 Job 수 (기본: `1`) |
@@ -286,15 +284,9 @@ Hub는 이를 DB 상태와 비교해 불일치하는 항목을 자동으로 정�
 
 여러 Agent를 다른 라벨로 등록하면 PR의 GitHub Label로 특정 머신에 배포할 수 있습니다.
 
-```bash
-# 집 PC Agent
-go run ./cmd/agent start ... --label env=home
+라벨은 Hub 대시보드에서 Agent별로 설정합니다 (`/admin/agents/{id}` 편집 화면).
 
-# 사무실 PC Agent
-go run ./cmd/agent start ... --label env=office --label arch=arm64
-```
-
-- PR에 GitHub Label `env=home` → 집 PC Agent에서만 빌드
+- PR에 GitHub Label `home` → 라벨 `home`을 가진 Agent에서만 빌드
 - PR에 GitHub Label 없음 → 가용한 모든 Agent 중 먼저 `READY`를 보낸 Agent에 배정
 
 매칭 규칙: **preview.labels ⊆ agent.labels** (preview가 요구하는 라벨이 agent 라벨의 부분집합이면 매칭)
