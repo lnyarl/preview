@@ -97,7 +97,7 @@ C:\preview\agent.exe start `
   --token=agt_여기에_토큰_입력 `
   --repo-url=https://github.com/org/repo.git `
   --advertise-host=$IP `
-  --label env=local
+  --label local
 ```
 
 ### 4. 시작 시 자동 실행 (NSSM)

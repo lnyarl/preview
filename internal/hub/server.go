@@ -78,6 +78,10 @@ func NewServer(cfg Config, admin *AdminHandler, wsh *WSHandler, webhook *Webhook
 	}
 }
 
+// Handler 는 조립된 http.Handler 를 노출한다. e2e 테스트(httptest.NewServer) 에서
+// Hub 를 in-process 기동할 때 사용한다. Run 경로는 영향받지 않는다.
+func (s *Server) Handler() http.Handler { return s.http.Handler }
+
 // Run 은 HTTP 서버를 기동한다. ctx 가 취소되면 Shutdown 을 호출한다.
 // 반환 에러는 서버 비정상 종료 이유.
 func (s *Server) Run(ctx context.Context) error {

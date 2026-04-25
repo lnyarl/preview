@@ -113,7 +113,7 @@ ExecStart=/usr/local/bin/agent start \
   --token=agt_여기에_토큰_입력 \
   --repo-url=https://github.com/org/repo.git \
   --advertise-host=이_머신의_IP \
-  --label env=prod
+  --label prod
 Restart=always
 RestartSec=10
 

@@ -1,7 +1,7 @@
 # Preview -- development task runner.
 # 사용법: make <target> [v=버전]
 
-.PHONY: dev up down logs ps push tag build fmt vet lint test sqlc \
+.PHONY: dev up down logs ps push tag build fmt vet lint test test-e2e sqlc \
         migrate-up migrate-down migrate-version db-reset db-reset-docker \
         run-hub run-agent
 
@@ -47,6 +47,10 @@ tag:
 ## 전체 테스트.
 test:
 	go test ./... -count=1
+
+## e2e 통합 테스트 (실제 Hub + Agent, fake Docker/Git).
+test-e2e:
+	go test -tags=e2e -v -timeout=60s ./tests/e2e/
 
 ## 빌드 검사.
 build:

@@ -20,7 +20,7 @@ Vercel Preview의 **셀프호스팅/오픈소스 버전**을 Go로 만드는 프
 - Pull 방식: `READY` 메시지로 일 요청 → Hub가 대기 중 job 전달
 - 책임: git clone → docker build → docker run(포트 동적 할당) → URL을 Hub에 보고 → PR 닫히면 컨테이너 정리
 - 하나의 Agent는 **여러 프리뷰 컨테이너를 동시에** 띄울 수 있음
-- Agent에 label 붙일 수 있음 (예: `region=home`, `owner=alice`) → label 기반 라우팅
+- Agent에 label 붙일 수 있음 (예: `home`, `prod`) → label 기반 라우팅
 
 ## 핵심 설계 결정
 

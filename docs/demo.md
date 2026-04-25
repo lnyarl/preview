@@ -38,7 +38,7 @@ order:
 2. Open `http://localhost:3000/admin/agents`, create an agent named `home`,
    copy the one-time token from the redirected page.
 3. Start the agent in another terminal:
-   `go run ./cmd/agent start --hub-url=ws://localhost:3000/agent/ws --token=$TOKEN --repo-url=$REPO --label env=local`.
+   `go run ./cmd/agent start --hub-url=ws://localhost:3000/agent/ws --token=$TOKEN --repo-url=$REPO --label local`.
 4. Send a fake `pull_request opened` webhook to
    `http://localhost:3000/webhooks/github` (HMAC-signed with
    `GITHUB_WEBHOOK_SECRET`).
