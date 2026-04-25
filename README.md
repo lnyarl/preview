@@ -1,209 +1,203 @@
-# Preview
+# Preview — Self-hosted Vercel-style PR previews
 
-GitHub PR을 열면 자동으로 프리뷰 환경을 띄우고, PR이 닫히면 정리하는 Go 기반 셀프호스팅 서비스.
+> GitHub PR opens → preview environment lives → PR closes → cleaned up. Self-hosted in Go.
 
-## 아키텍처
+![demo](docs/demo.gif) <!-- demo placeholder -->
 
-두 컴포넌트로 구성된다. Agent가 Hub에 outbound로 연결하므로 Agent 머신에는 inbound 포트가 필요 없다.
+## Why we built this
+
+Vercel and Netlify make per-PR preview environments effortless, but they are
+SaaS — you trade your build infrastructure, your auth surface, and a recurring
+bill for the convenience. For projects that already own a few machines (a
+home lab, an idle workstation, a corporate VM), the same idea is reachable
+with a much smaller footprint: a control-plane HTTP service, a workhorse that
+runs Docker, a thin protocol between them, and a webhook from GitHub. We
+wanted to see how close we could get with a single Go binary on each side and
+nothing else.
+
+The result is **Preview** — a two-binary system (`hub` and `agent`) that
+takes a `pull_request` webhook, builds the PR's `Dockerfile` on whichever
+agent matches the requested labels, exposes the running container at
+`pr-<n>.preview.<domain>`, and tears it down when the PR closes. The hub
+also serves a server-rendered admin dashboard so an operator can see what is
+running, force a rebuild, or delete an agent — all without a JavaScript
+framework.
+
+## Architecture
 
 ```mermaid
 graph LR
-    GH[GitHub] -- webhook --> Hub
-    Admin[관리자] -- HTTP --> Hub
-    Hub <-- WebSocket (pull) --> Agent
-    Agent -- docker build/run --> Container[PR 프리뷰 컨테이너]
-    User[사용자] -- pr-N.preview.example.com --> Hub
-    Hub -- reverse proxy --> Container
+    GH[GitHub] -->|webhook| Hub
+    User[Browser] -->|pr-N.preview.dom| Hub
+    Hub -->|ws outbound| Agent
+    Agent -->|docker SDK| Docker
+    Agent -->|git worktree| Git[Git repo cache]
+    Hub -->|reverse proxy| Agent
+    Hub -->|read/write| DB[(SQLite)]
+    Hub -->|admin SSR| Admin[Admin Browser]
 ```
 
-- **Hub (Control Plane)**: GitHub 웹훅 수신, 관리자 API/UI, Agent WebSocket 서버, Job 큐, 리버스 프록시.
-- **Agent (Data Plane)**: Hub에 outbound WebSocket 연결, pull 방식으로 Job 수신, git clone / docker build / docker run, 포트 동적 할당, PR 종료 시 정리.
+Two binaries, one protocol. The agent dials *out* to the hub, so an agent
+machine never needs an inbound port — handy for laptops behind NAT or office
+machines behind a corporate firewall. The hub keeps the source of truth in
+SQLite, dispatches jobs over the WebSocket when an agent reports `READY`, and
+proxies user traffic to the agent's host:port once the container is running.
 
-## 설계 결정 요약
+## Design Decisions FAQ
 
-- **Pull 방식 디스패치** — Agent가 capacity 있을 때만 일을 가져가 자연스러운 백프레셔.
-- **Agent -> Hub outbound 연결** — NAT/방화벽 뒤 머신도 Agent로 쓸 수 있다.
-- **토큰 기반 Agent 인증** — GitHub Actions self-hosted runner 방식. bcrypt 해시만 DB에 저장.
-- **SQLite로 시작, Postgres로 이식 가능** — `internal/store` 인터페이스가 경계면.
-- **웹 프레임워크 없음** — `net/http` 1.22+의 `ServeMux`만 사용.
-- **Hub와 Agent는 분리된 두 바이너리** — 배포 타깃·의존성이 다르다.
+### 1. Why Go?
 
-## 요구사항
+A Go binary is one self-contained artifact. The same `go build` produces a
+hub for Linux, macOS, and Windows; the same agent runs anywhere Docker runs.
+The standard library covers HTTP, WebSocket-adjacent primitives, JSON,
+templating, signal handling, and SQL — we avoid pulling in a framework
+specifically because we want to keep the dependency surface small enough to
+read end to end. Go's `slog` and `context` give us structured logs and
+cancellation without ceremony.
 
-- Go 1.22 이상
-- (선택) `golangci-lint` — lint 실행에 필요:
-  ```
-  go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-  ```
-- (선택) `sqlc` — sqlc generate 재실행 시:
-  ```
-  go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-  ```
-- (선택) `make` — 직접 `go run` 명령으로 대체 가능
+### 2. Why pull-based dispatch?
 
-## 로컬 실행
+A push model (hub picks an agent, sends a job) needs a queue and a healthcheck
+loop to know which agent has spare capacity. The pull model — agent sends
+`READY` when it has a slot — turns the agent's local capacity into the
+backpressure signal automatically. If an agent is busy, it does not say
+`READY`; the hub does not have to know how busy it is. This is the same
+pattern GitHub Actions self-hosted runners use, and it matches the rest of
+our "agent owns its state" decisions.
 
-Phase 1 기준 검증 플로우. 기본 Hub 포트는 `:3000`.
+### 3. Why agent → hub direction?
 
-```
-# 1) 마이그레이션 적용
+If the hub had to dial agents, every agent host would need an open inbound
+port, a public DNS name, or a reverse tunnel — all painful for the home-lab
+audience. By making the agent dial out over WebSocket, we accept exactly the
+same firewall posture as a browser opening Slack: outbound TCP is universally
+allowed. The hub is the only host that needs an inbound port, and most
+production deployments already terminate TLS in front of it.
+
+### 4. Why SQLite (with portability constraints)?
+
+For a single-hub MVP, SQLite is zero-configuration: one file, no daemon, easy
+to back up (`cp hub.db hub.db.bak`). We treat it as the storage layer behind
+a `store.PreviewStore` / `store.AgentStore` interface, and the SQL we write
+deliberately avoids `AUTOINCREMENT`, `INSERT OR REPLACE`, JSON operators, and
+other SQLite-isms that would not port cleanly to Postgres. When (not if) we
+need horizontal scale-out, the migration target is already implied by the
+interface and the SQL conventions.
+
+### 5. Why html/template + no JS framework?
+
+The admin dashboard is four pages — dashboard, agents list, previews list,
+preview detail — connected by form POSTs and 303 redirects. None of that
+needs a JS framework. `html/template` ships with Go, gives contextual
+auto-escape (HTML / URL / JS / CSS), and lets us embed the templates in the
+binary with `embed.FS`. The whole UI is a single CSS link to Pico.css and
+semantic HTML. If we ever need richer interactivity, the bar to add it is
+high — and the cost of *not* having a build step is paid every day.
+
+### 6. Why git worktree?
+
+When the same agent serves several PRs of the same repo, cloning `N` times
+costs `N x repo size`. `git worktree add` shares the object database and
+gives each preview its own working tree for the cost of a checkout. The
+agent keeps a single bare-ish clone in `~/.hub-agent/repos/<slug>/.git` and
+spawns one worktree per `preview_id`. Cleaning up a preview is `git worktree
+remove`, which is fast and atomic.
+
+### 7. Why Docker SDK over os/exec?
+
+`exec.Command("docker", ...)` returns lines of human-formatted text; the
+Docker SDK returns typed structs and JSON streams we can decode. That makes
+unit-testing the agent realistic — we expose a narrow `DockerClient`
+interface (`ImageBuild`, `ContainerCreate`, `ContainerStart`, etc.), let the
+SDK adapter live in `cmd/agent`, and inject a fake in tests. The SDK is also
+better at surfacing build errors: `jsonmessage.DisplayJSONMessagesStream`
+gives us the actual error code, not just a non-zero exit.
+
+### 8. Why label-based routing?
+
+A typical home setup mixes hosts: a quiet always-on Raspberry Pi (good for
+small services), a beefy desktop (good for builds with native deps), maybe a
+laptop that comes and goes. Label-based routing turns that physical reality
+into a config: each agent advertises labels (`env=home,arch=arm64`), each
+preview can require labels (parsed from the PR's GitHub labels), and the
+hub's dispatcher only assigns previews whose label set is a subset of an
+agent's. The match is computed in Go, not in SQL — keeping that policy
+portable was one of the reasons we kept the SQL boring.
+
+## Local Run
+
+Prerequisites: Go 1.22+, Docker, `make`.
+
+```bash
+# 1. Clone, copy env template, set required values.
+cp .env.example .env
+# edit .env: set GITHUB_WEBHOOK_SECRET=test-secret and ADMIN_PASSWORD=test-pass
+
+# 2. Run migrations.
 go run ./cmd/hub migrate up
 
-# 2) Hub 기동 (:3000)
-go run ./cmd/hub
-# 또는
-make run-hub
+# 3. Start the hub. The admin dashboard will be at http://localhost:3000/admin.
+ADMIN_PASSWORD=test-pass GITHUB_WEBHOOK_SECRET=test-secret go run ./cmd/hub
 
-# 3) 다른 터미널에서 health 확인
-curl -s http://localhost:3000/health
-# 출력: {"status":"ok"}
+# 4. In another terminal, register an agent via the admin UI or the JSON API:
+curl -u admin:test-pass -H 'Content-Type: application/json' \
+     -X POST http://localhost:3000/admin/agents \
+     -d '{"name":"home","labels":{"env":"home"}}'
+# Copy the token field of the response.
 
-# 4) Agent 등록 및 토큰 발급
-curl -s -X POST http://localhost:3000/admin/agents \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"agent-1","labels":{"env":"local"}}'
-# 응답 body 의 token 을 보관 (재조회 불가).
-
-# 5) Agent 기동
+# 5. Start an agent. PREVIEW_REPO_URL is the git URL the agent will clone.
 go run ./cmd/agent start \
-  --hub-url ws://localhost:3000/agent/ws \
-  --token agt_XXXXXXX \
-  --label env=local
+  --hub-url=ws://localhost:3000/agent/ws \
+  --token=<TOKEN_FROM_STEP_4> \
+  --repo-url=<YOUR_REPO_URL> \
+  --label env=home
 
-# 6) 상태 확인
-curl -s http://localhost:3000/admin/agents
-# 또는
-go run ./cmd/hub agents list
-
-# 빌드 / 검사
-go build ./...
-make fmt
-make vet
-make lint
-make test
+# 6. Trigger the webhook flow (tests/scripts/ has a fixture sender), or open
+#    a real PR in the configured repo. Watch /admin/previews for the new row.
 ```
 
-## Phase 1 검증
+## Production Deployment
 
-| 항목 | 명령 |
-|---|---|
-| 마이그레이션 up | `go run ./cmd/hub migrate up` |
-| Agent 등록 | `POST /admin/agents` |
-| Agent 조회 | `GET /admin/agents` 또는 `go run ./cmd/hub agents list` |
-| WebSocket 연결 | `go run ./cmd/agent start ...` |
-| Agent kill 후 offline 전환 | SIGTERM/SIGKILL 후 10초 이내 상태가 `offline` |
-| Hub graceful shutdown | SIGINT 후 5초 이내 close frame(1001) 송신 |
+- **TLS termination via fronting proxy.** Place caddy or nginx in front of
+  the hub. The hub itself listens on plain HTTP and trusts the proxy to
+  forward client headers correctly.
+- **`ADMIN_PASSWORD` is mandatory.** When unset, the hub opens `/admin/*`
+  unauthenticated and emits a `WARN admin_unauthenticated` log on startup.
+  This is a development convenience, not a production posture. Set it.
+- **Backups.** SQLite is one file; `cp hub.db hub.db.bak` (or
+  `sqlite3 hub.db ".backup hub.db.bak"` for a hot copy) is the whole story.
+- **Reverse proxy host matching.** Set `PREVIEW_BASE_DOMAIN` to your
+  production domain (e.g. `preview.example.com`) and add a wildcard DNS
+  record `*.preview.example.com` pointing at the hub.
+- **CSRF.** The admin dashboard uses HTTP Basic Auth and form POST. Behind
+  a public reverse proxy you should add a CSRF gate (caddy plugin, oauth2-
+  proxy, or your SSO of choice) before trusting authenticated browser
+  sessions.
+- **Token rotation.** Rotation is on the roadmap; for now, deleting and
+  re-creating an agent generates a fresh token. The old token is then
+  unusable.
 
-## Phase 2 검증
+## Roadmap
 
-Hub 포트는 기본 `:3000`. GitHub 웹훅 시뮬레이션에 `openssl` 또는 미리 계산한 HMAC 을 사용한다.
+- LOG message wiring (Docker logs streaming → admin UI tail)
+- Multi-repo routing (one hub fronting multiple git repos)
+- Build cache + image registry push
+- Old done/failed cleanup policy (scheduled pruning of terminal previews)
+- Token rotation, audit log
+- Postgres backend (the `store` interface is already shaped for it)
+- Container hardening (read-only fs, non-root)
+- WebSocket reverse proxy upgrade
+- Scheduled cleanup of old preview rows
 
-### S1 — Webhook → DB
+## Tech Stack
 
-```bash
-export PORT=3000
-export SECRET=testsecret
-
-# Hub 기동
-GITHUB_WEBHOOK_SECRET=$SECRET go run ./cmd/hub &
-
-# 웹훅 HMAC 계산 후 전송 (opened)
-PAYLOAD='{"action":"opened","pull_request":{"number":1,"head":{"sha":"abc","ref":"feat"},"labels":[]},"repository":{"full_name":"owner/repo"}}'
-SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
-curl -s -X POST http://localhost:$PORT/webhooks/github \
-  -H "Content-Type: application/json" \
-  -H "X-GitHub-Event: pull_request" \
-  -H "X-Hub-Signature-256: sha256=$SIG" \
-  -d "$PAYLOAD"
-# 응답: {"preview_id":"...","status":"queued"}
-
-# DB 확인
-go run ./cmd/hub previews list | jq .
-```
-
-### S2 — Dispatcher + Agent Job 실행
-
-```bash
-# Agent 등록 + 토큰 발급
-TOKEN=$(curl -s -X POST http://localhost:$PORT/admin/agents \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"local-agent","labels":{"env":"local"}}' | jq -r .token)
-
-# Agent 기동 (Docker 필요)
-go run ./cmd/agent start \
-  --hub-url ws://localhost:$PORT/agent/ws \
-  --token "$TOKEN" \
-  --label env=local \
-  --repo-url https://github.com/owner/repo.git \
-  --advertise-host 127.0.0.1
-
-# 상태 확인: building → running
-go run ./cmd/hub previews list | jq '.[].status'
-```
-
-### S3 — Reverse Proxy + Teardown
-
-```bash
-# running 상태 preview 에 프록시 접근
-PREVIEW_ID=$(go run ./cmd/hub previews list | jq -r '.[0].id')
-curl --resolve "pr-1.preview.localhost:$PORT:127.0.0.1" \
-  http://pr-1.preview.localhost:$PORT/
-
-# PR closed → JOB_TEARDOWN 전송 + Agent 컨테이너 정리
-PAYLOAD_CLOSE='{"action":"closed","pull_request":{"number":1,"head":{"sha":"abc","ref":"feat"},"labels":[]},"repository":{"full_name":"owner/repo"}}'
-SIG_CLOSE=$(printf '%s' "$PAYLOAD_CLOSE" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
-curl -s -X POST http://localhost:$PORT/webhooks/github \
-  -H "Content-Type: application/json" \
-  -H "X-GitHub-Event: pull_request" \
-  -H "X-Hub-Signature-256: sha256=$SIG_CLOSE" \
-  -d "$PAYLOAD_CLOSE"
-# 응답: {"preview_id":"...","status":"teardown"}
-
-# Reconciliation 단축 테스트
-go run ./cmd/hub previews seed-stale --pr=99
-GITHUB_WEBHOOK_SECRET=$SECRET go run ./cmd/hub \
-  --reconcile-interval=2s --stale-assigned-after=3s &
-sleep 5
-go run ./cmd/hub previews list | jq '.[] | select(.pr_number==99) | .status'
-# 출력: "queued"
-```
-
-## 왜 SQLite로 시작하는가
-
-- 단일 파일, 별도 서버 프로세스 없음 → 셀프호스팅 도입 장벽이 낮다.
-- `modernc.org/sqlite` 덕분에 **CGO 없이 순수 Go**로 빌드되어 크로스컴파일이 쉽다.
-- 단일 노드 Hub 운영에서 쓰기 경합이 심하지 않다.
-- 이식성 원칙을 코드 수준에서 강제하므로 미래 전환 비용이 크지 않다.
-
-## 언제 Postgres로 옮길 것인가
-
-다음 중 하나라도 해당되면 이전을 검토한다.
-
-- Hub를 수평 확장해 여러 인스턴스가 동일 DB를 공유해야 할 때 (SQLite는 단일 라이터).
-- 동시 쓰기 경합이 커져 `database is locked` 오류가 관측될 때.
-- 장기 보관·분석 쿼리가 무거워져 백업/리플리카/읽기 전용 노드가 필요할 때.
-- 운영팀이 이미 표준화된 Postgres 운영 스택을 가지고 있어 단일 파일 운영이 오히려 부담이 될 때.
-
-이식 경로는 다음과 같다.
-1. `DATABASE_URL`을 `postgres://...`로 전환.
-2. `internal/db/postgres/` 아래 sqlc를 새로 생성.
-3. `internal/store` 인터페이스를 만족하는 Postgres 구현체 추가.
-4. 비즈니스 로직(`internal/hub`, `internal/agent`)은 인터페이스에만 의존하므로 **변경 불필요**.
-5. 금지어(`AUTOINCREMENT`, `INSERT OR REPLACE`, `jsonb` 전용 연산자 등)를 쓰지 않았는지 스키마를 재검증.
-
-## 프로젝트 구조
-
-```
-cmd/hub, cmd/agent            진입점 (얇게)
-internal/hub                  Hub HTTP/WS 핸들러, 서비스, 서버
-internal/agent                Agent WS 클라이언트, 재연결 백오프
-internal/store                Repository 인터페이스 (이식성 경계면)
-internal/db/sqlite            sqlc 생성 코드 + AgentStore 구현체 + 마이그레이션 임베드
-internal/protocol             Hub<->Agent 메시지 타입
-db/migrations, db/queries, db/schema   SQL 자산
-docs/specs, docs/reports      Phase 기획서와 검증 보고서
-```
-
-## 라이선스
-
-TBD.
+- **Go 1.22+** — `net/http` ServeMux with method routes, `slog`,
+  `signal.NotifyContext`, `embed.FS`.
+- **modernc.org/sqlite** — CGO-free SQLite driver; the binary builds and
+  runs the same on every platform without a C toolchain.
+- **coder/websocket** — minimal, RFC-compliant WebSocket library.
+- **html/template** — standard library templating with contextual escape.
+- **github.com/docker/docker/client** — Docker Engine SDK, isolated to
+  `cmd/agent` only.
+- **golang-migrate/migrate, sqlc** — schema migrations and typed query
+  generation.
