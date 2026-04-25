@@ -166,6 +166,9 @@ func (f *statusFakeStore) ListByAgent(_ context.Context, _ string, _ []string) (
 func (f *statusFakeStore) ListAll(_ context.Context) ([]store.Preview, error) {
 	panic("not impl")
 }
+func (f *statusFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
+	return nil, nil
+}
 
 func TestStatusUpdaterOnStatusUpdate(t *testing.T) {
 	fs := newStatusFakeStore()

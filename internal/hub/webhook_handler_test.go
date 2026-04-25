@@ -120,6 +120,9 @@ func (f *fakePreviewStore) ListStaleAssigned(_ context.Context, _ time.Time) ([]
 func (f *fakePreviewStore) ListByAgent(_ context.Context, _ string, _ []string) ([]store.Preview, error) {
 	return nil, store.ErrNotImplementedStep1
 }
+func (f *fakePreviewStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
+	return nil, nil
+}
 
 // helpers --------------------------------------------------------------------
 

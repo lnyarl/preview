@@ -61,6 +61,9 @@ func (f *dispFakePreviewStore) ListByAgent(ctx context.Context, agentID string, 
 	return nil, nil
 }
 func (f *dispFakePreviewStore) ListAll(ctx context.Context) ([]store.Preview, error) { return nil, nil }
+func (f *dispFakePreviewStore) ListPreviewEvents(ctx context.Context, previewID string, limit, offset int) ([]store.PreviewEvent, error) {
+	return nil, nil
+}
 
 // fakeAgentStore — GetByID 만 사용.
 type fakeAgentStore struct {
@@ -202,5 +205,104 @@ func TestDispatcherOnReadyAgentStoreError(t *testing.T) {
 	d := newTestDispatcher(t, ps, as, sender)
 	if err := d.OnReady(context.Background(), "a1"); err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+// raceFakeStore 는 Phase 3 race 테스트용. ListQueuedForCandidates 는 항상 같은
+// candidate 1건을 반환하지만 Claim 은 sync.Once 로 정확히 1번만 성공한다.
+type raceFakeStore struct {
+	mu          sync.Mutex
+	claimed     int32
+	candidate   store.Preview
+	claimReturn store.Preview
+}
+
+func (f *raceFakeStore) Upsert(_ context.Context, _ store.Preview) (bool, *store.Preview, error) {
+	return false, nil, errors.New("not used")
+}
+func (f *raceFakeStore) GetByID(_ context.Context, _ string) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
+func (f *raceFakeStore) FindByHost(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
+func (f *raceFakeStore) ListQueuedForCandidates(_ context.Context) ([]store.Preview, error) {
+	return []store.Preview{f.candidate}, nil
+}
+func (f *raceFakeStore) Claim(_ context.Context, _ []string, _ string, _ time.Time) (*store.Preview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claimed > 0 {
+		return nil, store.ErrNotFound
+	}
+	f.claimed++
+	cp := f.claimReturn
+	return &cp, nil
+}
+func (f *raceFakeStore) UpdateStatus(_ context.Context, _, _, _, _ string, _ time.Time, _ store.PreviewFields) error {
+	return nil
+}
+func (f *raceFakeStore) ListRunningByAgent(_ context.Context, _ string) ([]store.Preview, error) {
+	return nil, nil
+}
+func (f *raceFakeStore) ListStaleAssigned(_ context.Context, _ time.Time) ([]store.Preview, error) {
+	return nil, nil
+}
+func (f *raceFakeStore) ListByAgent(_ context.Context, _ string, _ []string) ([]store.Preview, error) {
+	return nil, nil
+}
+func (f *raceFakeStore) ListAll(_ context.Context) ([]store.Preview, error) { return nil, nil }
+func (f *raceFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
+	return nil, nil
+}
+
+// TestDispatcherClaimRace: 50 goroutine, 1 queued preview, 정확히 1 SendJobAssign.
+func TestDispatcherClaimRace(t *testing.T) {
+	want := store.Preview{ID: "p1", RepoFullName: "o/r", PrNumber: 1}
+	ps := &raceFakeStore{candidate: want, claimReturn: want}
+	as := &fakeAgentStore{agent: &store.Agent{ID: "a1"}}
+	sender := &fakeSender{}
+	d := newTestDispatcher(t, ps, as, sender)
+
+	const N = 50
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			_ = d.OnReady(context.Background(), "a1")
+		}()
+	}
+	wg.Wait()
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if sender.calls != 1 {
+		t.Fatalf("SendJobAssign calls=%d want 1", sender.calls)
+	}
+}
+
+// TestDispatcherPause: Pause 후 OnReady → Claim 호출 0회 + SendJobAssign 0회.
+func TestDispatcherPause(t *testing.T) {
+	ps := &dispFakePreviewStore{
+		candidates:  []store.Preview{{ID: "p1"}},
+		claimReturn: &store.Preview{ID: "p1"},
+	}
+	as := &fakeAgentStore{agent: &store.Agent{ID: "a1"}}
+	sender := &fakeSender{}
+	d := newTestDispatcher(t, ps, as, sender)
+
+	d.Pause()
+	if !d.Paused() {
+		t.Fatalf("Paused() = false; want true")
+	}
+	if err := d.OnReady(context.Background(), "a1"); err != nil {
+		t.Fatalf("OnReady: %v", err)
+	}
+	if sender.calls != 0 {
+		t.Fatalf("SendJobAssign calls=%d want 0 after Pause", sender.calls)
+	}
+	if len(ps.claimedIDs) != 0 {
+		t.Fatalf("Claim called after Pause: %v", ps.claimedIDs)
 	}
 }

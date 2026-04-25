@@ -69,6 +69,12 @@ func (f *fakeDocker) ContainerRemove(ctx context.Context, id string, opts Remove
 	return nil
 }
 func (f *fakeDocker) Ping(ctx context.Context) error { return nil }
+func (f *fakeDocker) ContainerList(ctx context.Context, filters map[string]string) ([]ContainerSummary, error) {
+	return nil, nil
+}
+func (f *fakeDocker) ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error) {
+	return ContainerInspectResult{}, nil
+}
 
 // runnerFakeHub 는 HubSender 의 capture mock.
 type runnerFakeHub struct {

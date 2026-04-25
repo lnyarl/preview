@@ -97,6 +97,9 @@ func (f *reconcilerFakeStore) ListRunningByAgent(_ context.Context, _ string) ([
 func (f *reconcilerFakeStore) ListByAgent(_ context.Context, _ string, _ []string) ([]store.Preview, error) {
 	panic("not impl")
 }
+func (f *reconcilerFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
+	return nil, nil
+}
 
 func TestReconcilerStaleAssignedRequeued(t *testing.T) {
 	fs := newReconcilerFakeStore()

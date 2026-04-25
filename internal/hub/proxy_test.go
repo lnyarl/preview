@@ -183,3 +183,6 @@ func (f *fakeProxyStore) ListByAgent(_ context.Context, _ string, _ []string) ([
 func (f *fakeProxyStore) ListAll(_ context.Context) ([]store.Preview, error) {
 	panic("not impl")
 }
+func (f *fakeProxyStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
+	return nil, nil
+}
