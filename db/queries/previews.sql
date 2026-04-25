@@ -22,9 +22,41 @@ UPDATE previews
 SET status = ?, error_message = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: UpdatePreviewStatusFields :execrows
+UPDATE previews
+SET status = ?,
+    updated_at = ?,
+    container_id = COALESCE(?, container_id),
+    agent_host = COALESCE(?, agent_host),
+    agent_port = COALESCE(?, agent_port),
+    public_url = COALESCE(?, public_url),
+    error_message = COALESCE(?, error_message),
+    assigned_agent_id = COALESCE(?, assigned_agent_id)
+WHERE id = ?;
+
 -- name: InsertPreviewEvent :exec
 INSERT INTO preview_events (id, preview_id, from_status, to_status, message, created_at)
 VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: ListAllPreviews :many
 SELECT * FROM previews ORDER BY created_at DESC;
+
+-- name: ListQueuedPreviewsForLabels :many
+SELECT * FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50;
+
+-- name: ClaimPreview :one
+UPDATE previews
+SET status = 'assigned',
+    assigned_agent_id = ?,
+    updated_at = ?
+WHERE id = (
+  SELECT p.id FROM previews p
+  WHERE p.status = 'queued'
+    AND p.id IN (sqlc.slice('candidate_ids'))
+  ORDER BY p.created_at ASC
+  LIMIT 1
+)
+RETURNING *;
+
+-- name: ResetAllAssignedPreviews :execrows
+UPDATE previews SET status = 'queued', assigned_agent_id = NULL, updated_at = ? WHERE status = 'assigned';

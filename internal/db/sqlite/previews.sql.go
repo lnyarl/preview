@@ -8,7 +8,64 @@ package sqlitestore
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
+
+const claimPreview = `-- name: ClaimPreview :one
+UPDATE previews
+SET status = 'assigned',
+    assigned_agent_id = ?,
+    updated_at = ?
+WHERE id = (
+  SELECT p.id FROM previews p
+  WHERE p.status = 'queued'
+    AND p.id IN (/*SLICE:candidate_ids*/?)
+  ORDER BY p.created_at ASC
+  LIMIT 1
+)
+RETURNING id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at
+`
+
+type ClaimPreviewParams struct {
+	AssignedAgentID sql.NullString `json:"assigned_agent_id"`
+	UpdatedAt       string         `json:"updated_at"`
+	CandidateIds    []string       `json:"candidate_ids"`
+}
+
+func (q *Queries) ClaimPreview(ctx context.Context, arg ClaimPreviewParams) (Preview, error) {
+	query := claimPreview
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.AssignedAgentID)
+	queryParams = append(queryParams, arg.UpdatedAt)
+	if len(arg.CandidateIds) > 0 {
+		for _, v := range arg.CandidateIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:candidate_ids*/?", strings.Repeat(",?", len(arg.CandidateIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:candidate_ids*/?", "NULL", 1)
+	}
+	row := q.db.QueryRowContext(ctx, query, queryParams...)
+	var i Preview
+	err := row.Scan(
+		&i.ID,
+		&i.RepoFullName,
+		&i.PrNumber,
+		&i.CommitSha,
+		&i.Branch,
+		&i.Status,
+		&i.AssignedAgentID,
+		&i.ContainerID,
+		&i.AgentHost,
+		&i.AgentPort,
+		&i.PublicUrl,
+		&i.Labels,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
 
 const getPreviewByID = `-- name: GetPreviewByID :one
 SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE id = ?
@@ -138,6 +195,61 @@ func (q *Queries) ListAllPreviews(ctx context.Context) ([]Preview, error) {
 	return items, nil
 }
 
+const listQueuedPreviewsForLabels = `-- name: ListQueuedPreviewsForLabels :many
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50
+`
+
+func (q *Queries) ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error) {
+	rows, err := q.db.QueryContext(ctx, listQueuedPreviewsForLabels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Preview{}
+	for rows.Next() {
+		var i Preview
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoFullName,
+			&i.PrNumber,
+			&i.CommitSha,
+			&i.Branch,
+			&i.Status,
+			&i.AssignedAgentID,
+			&i.ContainerID,
+			&i.AgentHost,
+			&i.AgentPort,
+			&i.PublicUrl,
+			&i.Labels,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resetAllAssignedPreviews = `-- name: ResetAllAssignedPreviews :execrows
+UPDATE previews SET status = 'queued', assigned_agent_id = NULL, updated_at = ? WHERE status = 'assigned'
+`
+
+func (q *Queries) ResetAllAssignedPreviews(ctx context.Context, updatedAt string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, resetAllAssignedPreviews, updatedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updatePreviewStatus = `-- name: UpdatePreviewStatus :exec
 UPDATE previews
 SET status = ?, error_message = ?, updated_at = ?
@@ -159,6 +271,49 @@ func (q *Queries) UpdatePreviewStatus(ctx context.Context, arg UpdatePreviewStat
 		arg.ID,
 	)
 	return err
+}
+
+const updatePreviewStatusFields = `-- name: UpdatePreviewStatusFields :execrows
+UPDATE previews
+SET status = ?,
+    updated_at = ?,
+    container_id = COALESCE(?, container_id),
+    agent_host = COALESCE(?, agent_host),
+    agent_port = COALESCE(?, agent_port),
+    public_url = COALESCE(?, public_url),
+    error_message = COALESCE(?, error_message),
+    assigned_agent_id = COALESCE(?, assigned_agent_id)
+WHERE id = ?
+`
+
+type UpdatePreviewStatusFieldsParams struct {
+	Status          string         `json:"status"`
+	UpdatedAt       string         `json:"updated_at"`
+	ContainerID     sql.NullString `json:"container_id"`
+	AgentHost       sql.NullString `json:"agent_host"`
+	AgentPort       sql.NullInt64  `json:"agent_port"`
+	PublicUrl       sql.NullString `json:"public_url"`
+	ErrorMessage    sql.NullString `json:"error_message"`
+	AssignedAgentID sql.NullString `json:"assigned_agent_id"`
+	ID              string         `json:"id"`
+}
+
+func (q *Queries) UpdatePreviewStatusFields(ctx context.Context, arg UpdatePreviewStatusFieldsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updatePreviewStatusFields,
+		arg.Status,
+		arg.UpdatedAt,
+		arg.ContainerID,
+		arg.AgentHost,
+		arg.AgentPort,
+		arg.PublicUrl,
+		arg.ErrorMessage,
+		arg.AssignedAgentID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertPreview = `-- name: UpsertPreview :one

@@ -9,6 +9,7 @@ import (
 )
 
 type Querier interface {
+	ClaimPreview(ctx context.Context, arg ClaimPreviewParams) (Preview, error)
 	CreateAgent(ctx context.Context, arg CreateAgentParams) error
 	DeleteAgent(ctx context.Context, id string) error
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
@@ -18,8 +19,11 @@ type Querier interface {
 	InsertPreviewEvent(ctx context.Context, arg InsertPreviewEventParams) error
 	ListAgents(ctx context.Context) ([]Agent, error)
 	ListAllPreviews(ctx context.Context) ([]Preview, error)
+	ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error)
+	ResetAllAssignedPreviews(ctx context.Context, updatedAt string) (int64, error)
 	UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) error
 	UpdatePreviewStatus(ctx context.Context, arg UpdatePreviewStatusParams) error
+	UpdatePreviewStatusFields(ctx context.Context, arg UpdatePreviewStatusFieldsParams) (int64, error)
 	UpsertPreview(ctx context.Context, arg UpsertPreviewParams) (Preview, error)
 }
 
