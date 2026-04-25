@@ -2,7 +2,8 @@
 # 사용법: make <target> [v=버전]
 
 .PHONY: dev up down logs ps push tag build fmt vet lint test sqlc \
-        migrate-up migrate-down migrate-version run-hub run-agent
+        migrate-up migrate-down migrate-version db-reset db-reset-docker \
+        run-hub run-agent
 
 # ── 개발 환경 (Docker) ────────────────────────────────────────────────────────
 
@@ -81,6 +82,16 @@ migrate-down:
 ## 현재 마이그레이션 버전.
 migrate-version:
 	go run ./cmd/hub migrate version
+
+## 로컬 DB 초기화: hub.db 삭제 후 마이그레이션 재적용.
+db-reset:
+	rm -f hub.db
+	go run ./cmd/hub migrate up
+
+## Docker 볼륨까지 포함해 완전 초기화 후 재기동.
+db-reset-docker:
+	docker compose down -v
+	docker compose up -d --build
 
 # ── 로컬 직접 실행 ────────────────────────────────────────────────────────────
 
