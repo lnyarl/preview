@@ -25,6 +25,8 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       RECONCILE_INTERVAL: "${RECONCILE_INTERVAL:-1m}"
       STALE_ASSIGNED_AFTER: "${STALE_ASSIGNED_AFTER:-5m}"
+      # Agent 바이너리 다운로드 base URL — 토큰 페이지에 OS별 다운로드 명령 표시
+      AGENT_DOWNLOAD_URL: "${AGENT_DOWNLOAD_URL:-}"
       # 개발용 Agent 자동 등록 — Hub 시작 시 "dev-agent" 를 이 토큰으로 자동 생성
       DEV_AGENT_TOKEN: "dev-local-token-do-not-use-in-prod"
     volumes:
