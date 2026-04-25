@@ -18,10 +18,12 @@ import (
 )
 
 // StatusUpdater 는 Agent 의 STATUS_UPDATE 를 PreviewStore.UpdateStatus 로 변환한다.
+// CacheNotifier 가 주입되면 terminal 상태(done/failed/teardown) 전이 시 proxy 캐시를 무효화한다.
 type StatusUpdater struct {
-	Store  store.PreviewStore
-	Logger *slog.Logger
-	now    func() time.Time
+	Store         store.PreviewStore
+	Logger        *slog.Logger
+	CacheNotifier PreviewCacheNotifier // optional, nil-safe
+	now           func() time.Time
 }
 
 // NewStatusUpdater 는 StatusUpdater 를 조립한다.
@@ -32,6 +34,9 @@ func NewStatusUpdater(s store.PreviewStore, logger *slog.Logger) *StatusUpdater 
 		now:    func() time.Time { return time.Now().UTC() },
 	}
 }
+
+// SetCacheNotifier 는 proxy 캐시 무효화 콜백을 주입한다.
+func (u *StatusUpdater) SetCacheNotifier(n PreviewCacheNotifier) { u.CacheNotifier = n }
 
 // OnStatusUpdate 는 STATUS_UPDATE 메시지 1건을 처리한다. fromStatus="" (no CAS).
 func (u *StatusUpdater) OnStatusUpdate(ctx context.Context, agentID string, d protocol.StatusUpdateData) error {
@@ -51,6 +56,11 @@ func (u *StatusUpdater) OnStatusUpdate(ctx context.Context, agentID string, d pr
 	}
 	if err := u.Store.UpdateStatus(ctx, d.PreviewID, "", d.Status, d.Message, u.now(), fields); err != nil {
 		return fmt.Errorf("status_update: %w", err)
+	}
+	// 비-running 으로 전이하면 proxy 캐시에서 항목을 제거
+	// (running 진입 시점에는 캐시가 비어있는 게 정상 — 다음 요청에서 새로 채워짐).
+	if u.CacheNotifier != nil && d.Status != "running" {
+		u.CacheNotifier.Invalidate(d.PreviewID)
 	}
 	switch d.Status {
 	case "running":
