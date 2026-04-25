@@ -28,17 +28,37 @@ const (
 	PongTimeout  = 5 * time.Second
 )
 
+// ReadyHandler 는 Agent 가 READY 메시지를 보냈을 때 호출되는 콜백.
+// 보통 *Dispatcher.OnReady 로 wire 된다. nil 이면 READY 는 로그만 남기고 무시.
+type ReadyHandler interface {
+	OnReady(ctx context.Context, agentID string) error
+}
+
+// StatusUpdateHandler 는 Agent 가 STATUS_UPDATE 를 보냈을 때 호출되는 콜백.
+// PreviewStore.UpdateStatus 호출을 wrapper 한 핸들러가 주입된다.
+type StatusUpdateHandler interface {
+	OnStatusUpdate(ctx context.Context, agentID string, data protocol.StatusUpdateData) error
+}
+
 // WSHandler 는 /agent/ws 엔드포인트를 처리한다.
 type WSHandler struct {
-	Store    store.AgentStore
-	Registry *ConnRegistry
-	Logger   *slog.Logger
+	Store        store.AgentStore
+	Registry     *ConnRegistry
+	Logger       *slog.Logger
+	Ready        ReadyHandler        // nil 허용 (Phase 1 호환).
+	StatusUpdate StatusUpdateHandler // nil 허용.
 }
 
 // NewWSHandler 는 WSHandler 를 조립한다.
 func NewWSHandler(s store.AgentStore, reg *ConnRegistry, logger *slog.Logger) *WSHandler {
 	return &WSHandler{Store: s, Registry: reg, Logger: logger}
 }
+
+// SetReady 는 READY 콜백을 설정한다 (Phase 2: dispatcher).
+func (h *WSHandler) SetReady(r ReadyHandler) { h.Ready = r }
+
+// SetStatusUpdate 는 STATUS_UPDATE 콜백을 설정한다 (Phase 2: preview status updater).
+func (h *WSHandler) SetStatusUpdate(s StatusUpdateHandler) { h.StatusUpdate = s }
 
 // Register 는 mux 에 GET /agent/ws 라우트를 붙인다.
 func (h *WSHandler) Register(mux *http.ServeMux) {
@@ -181,6 +201,11 @@ func (h *WSHandler) markOffline(agentID string) {
 // readLoop 은 수신 메시지를 dispatch 한다.
 // PONG 은 coder/websocket 라이브러리가 conn.Ping 의 응답으로 내부 처리한다.
 // 앱 레벨 PING/PONG (protocol.PingData) 는 Phase 2 이후 확장 여지를 위해 수신만 지원.
+//
+// Phase 2:
+//   - READY: dispatcher.OnReady 를 goroutine 으로 호출 (Read loop blocking 회피).
+//   - STATUS_UPDATE: PreviewStore.UpdateStatus 를 wrap 한 핸들러 호출.
+//   - 그 외(HELLO/LOG): debug 로그.
 func (h *WSHandler) readLoop(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, agentID string) {
 	defer cancel()
 	for {
@@ -196,10 +221,41 @@ func (h *WSHandler) readLoop(ctx context.Context, cancel context.CancelFunc, con
 			h.Logger.Warn("ws_decode_failed", "agent_id", agentID, "err", err.Error())
 			continue
 		}
-		// 현재 Phase 1 에서는 HELLO 는 session 시작 시점에만 처리되고
-		// 그 외 수신은 Phase 2 READY/STATUS_UPDATE/LOG 대비로 로그만 남긴다.
-		if env.Type != "" {
-			h.Logger.Debug("ws_message_received", "agent_id", agentID, "type", env.Type)
+		switch env.Type {
+		case protocol.TypeReady:
+			if h.Ready == nil {
+				h.Logger.Debug("ws_ready_no_handler", "agent_id", agentID)
+				continue
+			}
+			// goroutine: dispatcher 의 DB 호출이 Read loop 를 막지 않도록.
+			go func(id string) {
+				bg, c := context.WithTimeout(context.Background(), 10*time.Second)
+				defer c()
+				if err := h.Ready.OnReady(bg, id); err != nil {
+					h.Logger.Warn("ws_ready_dispatch_failed", "agent_id", id, "err", err.Error())
+				}
+			}(agentID)
+		case protocol.TypeStatusUpdate:
+			if h.StatusUpdate == nil {
+				h.Logger.Debug("ws_status_update_no_handler", "agent_id", agentID)
+				continue
+			}
+			var su protocol.StatusUpdateData
+			if err := env.Decode(&su); err != nil {
+				h.Logger.Warn("ws_status_update_decode_failed", "agent_id", agentID, "err", err.Error())
+				continue
+			}
+			go func(d protocol.StatusUpdateData) {
+				bg, c := context.WithTimeout(context.Background(), 10*time.Second)
+				defer c()
+				if err := h.StatusUpdate.OnStatusUpdate(bg, agentID, d); err != nil {
+					h.Logger.Warn("ws_status_update_failed", "agent_id", agentID, "preview_id", d.PreviewID, "err", err.Error())
+				}
+			}(su)
+		default:
+			if env.Type != "" {
+				h.Logger.Debug("ws_message_received", "agent_id", agentID, "type", env.Type)
+			}
 		}
 	}
 }

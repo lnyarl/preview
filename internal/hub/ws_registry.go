@@ -2,13 +2,19 @@
 //   - agent_id -> 활성 WS 연결 매핑.
 //   - 동일 agent_id 의 중복 연결을 탐지 (결정 12).
 //   - Hub shutdown 시 모든 연결에 close frame 을 송신.
+//   - Dispatcher.JobSender 인터페이스 구현 (SendJobAssign).
 package hub
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/coder/websocket"
+
+	"github.com/lnyarl/preview/internal/protocol"
+	"github.com/lnyarl/preview/internal/store"
 )
 
 // wsConn 은 단일 WS 세션에 대한 레지스트리 엔트리.
@@ -65,4 +71,60 @@ func (r *ConnRegistry) closeAll(code websocket.StatusCode, reason string) {
 		_ = c.conn.Close(code, reason)
 		c.cancel()
 	}
+}
+
+// connFor 는 agent_id 로 wsConn 을 조회한다. 미등록이면 nil.
+func (r *ConnRegistry) connFor(agentID string) *wsConn {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.conns[agentID]
+}
+
+// WSJobSender 는 Dispatcher.JobSender 를 ConnRegistry 위에 구현한다.
+// resolveRepo 는 preview.RepoFullName → git URL 변환 (multi-repo 대비, 본 Phase 는 단일).
+type WSJobSender struct {
+	Registry    *ConnRegistry
+	ResolveRepo RepoURLResolver
+}
+
+// NewWSJobSender 는 WSJobSender 를 조립한다. resolve 가 nil 이면 echo.
+func NewWSJobSender(reg *ConnRegistry, resolve RepoURLResolver) *WSJobSender {
+	if resolve == nil {
+		resolve = func(s string) string { return s }
+	}
+	return &WSJobSender{Registry: reg, ResolveRepo: resolve}
+}
+
+// SendJobAssign 은 agentID 의 WS 에 JOB_ASSIGN envelope 를 송신한다.
+// 미연결 agent 는 에러. 호출자는 로그 후 무시 (Claim 은 이미 성공이므로 reconciler 가 회수).
+func (s *WSJobSender) SendJobAssign(ctx context.Context, agentID string, p store.Preview) error {
+	c := s.Registry.connFor(agentID)
+	if c == nil {
+		return fmt.Errorf("ws_job_sender: agent %s not connected", agentID)
+	}
+	data := JobAssignFromPreview(p, s.ResolveRepo(p.RepoFullName))
+	env, err := protocol.NewEnvelope(protocol.TypeJobAssign, data)
+	if err != nil {
+		return fmt.Errorf("ws_job_sender: envelope: %w", err)
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("ws_job_sender: marshal: %w", err)
+	}
+	return c.conn.Write(ctx, websocket.MessageText, b)
+}
+
+// SendTeardown 은 agentID 의 WS 에 JOB_TEARDOWN 을 송신한다.
+// Step 3 webhook close 분기 + Step 2 동작 호환을 위해 미리 노출.
+func (s *WSJobSender) SendTeardown(ctx context.Context, agentID string, previewID string) error {
+	c := s.Registry.connFor(agentID)
+	if c == nil {
+		return fmt.Errorf("ws_job_sender: agent %s not connected", agentID)
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeJobTeardown, protocol.JobTeardownData{PreviewID: previewID})
+	if err != nil {
+		return fmt.Errorf("ws_job_sender: teardown envelope: %w", err)
+	}
+	b, _ := json.Marshal(env)
+	return c.conn.Write(ctx, websocket.MessageText, b)
 }
