@@ -51,11 +51,9 @@ type Envelope struct {
 // 레거시 Agent (Phase 2) 는 이 키 자체를 보내지 않으므로 Hub 측이
 // hasRunningPreviewsKey 헬퍼로 부재를 구분해 동기화 SKIP.
 //
-// Labels 는 단순 값 슬라이스 (예: ["home", "us-east"]). 키-값 형태가 아니므로
-// 단순한 set-membership 매칭으로 라우팅한다.
+// 라벨은 Hub 에서만 관리한다. Agent 는 라벨을 보내지 않는다.
 type HelloData struct {
 	Version         string   `json:"version"`
-	Labels          []string `json:"labels,omitempty"`
 	AdvertiseHost   string   `json:"advertise_host,omitempty"`
 	RunningPreviews []string `json:"running_previews"`
 }

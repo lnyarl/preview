@@ -6,7 +6,7 @@ import (
 )
 
 func TestEnvelopeRoundTrip(t *testing.T) {
-	hello := HelloData{Version: ProtoVersion, Labels: []string{"local"}}
+	hello := HelloData{Version: ProtoVersion, AdvertiseHost: "1.2.3.4"}
 	env, err := NewEnvelope(TypeHello, hello)
 	if err != nil {
 		t.Fatalf("NewEnvelope: %v", err)
@@ -26,7 +26,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	if err := got.Decode(&decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if decoded.Version != hello.Version || len(decoded.Labels) != 1 || decoded.Labels[0] != "local" {
+	if decoded.Version != hello.Version || decoded.AdvertiseHost != "1.2.3.4" {
 		t.Fatalf("unexpected decoded: %+v", decoded)
 	}
 }

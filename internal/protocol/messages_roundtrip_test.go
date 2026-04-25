@@ -10,7 +10,6 @@ import (
 )
 
 func TestMessageRoundTrip(t *testing.T) {
-	helloLabels := []string{"home"}
 	jobLabels := []string{"home"}
 	containerID := "container-123"
 	host := "127.0.0.1"
@@ -28,7 +27,6 @@ func TestMessageRoundTrip(t *testing.T) {
 			typ:  TypeHello,
 			data: HelloData{
 				Version:         "v1",
-				Labels:          helloLabels,
 				AdvertiseHost:   "127.0.0.1",
 				RunningPreviews: []string{"p1", "p2"},
 			},

@@ -115,7 +115,6 @@ func (c *Client) once(ctx context.Context) error {
 	}
 	hello, err := protocol.NewEnvelope(protocol.TypeHello, protocol.HelloData{
 		Version:         protocol.ProtoVersion,
-		Labels:          c.cfg.Labels,
 		AdvertiseHost:   c.cfg.AdvertiseHost,
 		RunningPreviews: running,
 	})

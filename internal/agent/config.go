@@ -1,6 +1,5 @@
 // 이 파일의 책임:
 //   - Agent CLI 플래그·env 파싱.
-//   - --label value 반복 옵션 처리 (단순 값 슬라이스).
 //   - Phase 2: --repo-url(필수) / --work-dir / --prefetch-interval / --max-jobs.
 //
 // 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-7,
@@ -13,7 +12,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -22,10 +20,10 @@ import (
 var ErrMissingRequiredFlag = errors.New("missing required flag")
 
 // Config 는 Agent start 서브커맨드 실행에 필요한 설정.
+// 라벨은 Hub 에서 관리하므로 Agent 에 없다 — Hub 대시보드에서 에이전트별로 설정한다.
 type Config struct {
 	HubURL           string
 	Token            string
-	Labels           []string
 	AdvertiseHost    string
 	LogLevel         string
 	RepoURL          string        // Phase 2: 결정 9 (1 Agent = 1 repo).
@@ -34,30 +32,8 @@ type Config struct {
 	MaxJobs          int           // Phase 2: 동시 슬롯 한도. 기본 1.
 }
 
-// labelsFlag 는 --label value 형식을 반복 수집한다.
-// 단순 문자열 슬라이스로 보관되며, 라우팅 단계에서 set-membership 으로 매칭된다.
-type labelsFlag struct {
-	vals []string
-}
-
-func (l *labelsFlag) String() string {
-	if l == nil {
-		return ""
-	}
-	return strings.Join(l.vals, ",")
-}
-
-func (l *labelsFlag) Set(s string) error {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return fmt.Errorf("label must not be empty")
-	}
-	l.vals = append(l.vals, s)
-	return nil
-}
-
 // ParseConfig 는 주어진 args 로부터 Config 를 만든다. args 는 os.Args[2:] 상당.
-// env: HUB_URL, HUB_TOKEN, AGENT_ADVERTISE_HOST, LOG_LEVEL, AGENT_LABELS("a,b,c"),
+// env: HUB_URL, HUB_TOKEN, AGENT_ADVERTISE_HOST, LOG_LEVEL,
 // AGENT_REPO_URL, AGENT_WORK_DIR, AGENT_PREFETCH_INTERVAL, AGENT_MAX_JOBS.
 func ParseConfig(args []string) (Config, error) {
 	fs := flag.NewFlagSet("agent start", flag.ContinueOnError)
@@ -71,29 +47,8 @@ func ParseConfig(args []string) (Config, error) {
 		prefetch = fs.String("prefetch-interval", envOr("AGENT_PREFETCH_INTERVAL", "5m"), "background fetch interval; 0 disables")
 		maxJobs  = fs.Int("max-jobs", envInt("AGENT_MAX_JOBS", 1), "max concurrent preview jobs")
 	)
-	var labels labelsFlag
-	fs.Var(&labels, "label", "label value (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
-	}
-
-	// env AGENT_LABELS="a,b,c" 도 병합. 이미 flag 로 들어온 동일 값은 dedupe.
-	if envLabels := os.Getenv("AGENT_LABELS"); envLabels != "" {
-		seen := make(map[string]struct{}, len(labels.vals))
-		for _, v := range labels.vals {
-			seen[v] = struct{}{}
-		}
-		for _, part := range strings.Split(envLabels, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			if _, exists := seen[part]; exists {
-				continue
-			}
-			seen[part] = struct{}{}
-			labels.vals = append(labels.vals, part)
-		}
 	}
 
 	if *hubURL == "" {
@@ -112,13 +67,9 @@ func ParseConfig(args []string) (Config, error) {
 	if *maxJobs < 1 {
 		*maxJobs = 1
 	}
-	if labels.vals == nil {
-		labels.vals = []string{}
-	}
 	return Config{
 		HubURL:           *hubURL,
 		Token:            *tokenFlg,
-		Labels:           labels.vals,
 		AdvertiseHost:    *advHost,
 		LogLevel:         *logLvl,
 		RepoURL:          *repoURL,
