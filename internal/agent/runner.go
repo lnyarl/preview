@@ -5,13 +5,10 @@
 //   - jobs map: previewID → 메모리 상태 (containerID, port, worktree). 재시작 복원은 Step 3 이월.
 //   - Phase 4: run 명령을 셸로 실행 (`sh -c <line>`), 컨테이너 포트는 Holder.Snapshot 으로
 //     결정. Dockerfile 강제 검사는 제거 (결정 4).
-//   - run 명령은 빌드뿐 아니라 checkout 후 배포까지 담당. 빈 슬라이스이면 실행을 건너뛴다
-//     (기본 명령 없음 — docker 의존을 가정하지 않는다).
+//   - run 명령은 빌드뿐 아니라 checkout 후 배포까지 담당. 빈 슬라이스이면 실행을 건너뛴다.
+//   - Phase 5: Handle 의 defer 가 슬롯 회복 후 maybeSendReady (ready.go) 를 호출.
 //
-// fake DockerClient 로 단위 테스트 주입 (NF-Test-Docker-1).
-//
-// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6/8,
-//       docs/specs/phase-4-agent-build-config.md §4-7, 결정 3/4/5/11.
+// fake DockerClient 로 단위 테스트 주입 (NF-Test-Docker-1). 참고: phase-2 §5-1 결정 6/8, phase-4 §4-7 결정 3/4/5/11, phase-5 §3 결정 1/3/4/10.
 package agent
 
 import (
@@ -52,7 +49,9 @@ type Runner struct {
 	hub     HubSender
 	advHost string
 	logger  *slog.Logger
-	holder  *Holder // Phase 4: 빌드 설정 (nil 허용 = 기본값으로 동작).
+	holder  *Holder     // Phase 4: 빌드 설정 (nil 허용 = 기본값으로 동작).
+	ready   ReadySender // Phase 5: READY 송신 의존 (nil 허용 = no-op).
+	maxJobs int         // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
 
 	jobs     sync.Map    // previewID -> *runningJob
 	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
@@ -106,6 +105,7 @@ func NewRunner(docker DockerClient, cache *RepoCache, hub HubSender, advHost str
 		hub:     hub,
 		advHost: advHost,
 		logger:  logger,
+		maxJobs: 1, // Phase 5: SetMaxJobs 미호출 시 1 슬롯 동작 보장.
 	}
 }
 
@@ -131,7 +131,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return nil
 	}
 	r.inFlight.Add(1)
-	defer r.inFlight.Add(-1)
+	defer func() { r.inFlight.Add(-1); r.maybeSendReady(ctx) }() // Phase 5: 슬롯 회복 + 다음 READY.
 	r.logger.Info("agent_job_assign", "preview_id", pid, "repo_url", msg.RepoURL, "sha", msg.CommitSHA)
 
 	// (1) building 송신.

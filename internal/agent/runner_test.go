@@ -355,3 +355,104 @@ func TestAllocatePort(t *testing.T) {
 		t.Fatalf("port2=%d", port2)
 	}
 }
+
+// F-6 (Phase 5): 단일 Handle 성공 path 후 ReadySender 가 1 회 호출된다.
+// MaxJobs=1 이고 inFlight 가 defer 안에서 1→0 으로 감소한 직후 maybeSendReady
+// 가 1 회 송신.
+func TestRunnerHandleDeferTriggersReady(t *testing.T) {
+	runner, _, _, _ := newRunnerSetup(t, true)
+	withNoopBuildHolder(t, runner)
+	fake := &fakeReadySender{}
+	runner.SetReadySender(fake)
+	runner.SetMaxJobs(1)
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got := fake.count(); got != 1 {
+		t.Fatalf("ReadySender calls=%d want 1", got)
+	}
+}
+
+// F-7: build 실패 path 에서도 defer 가 maybeSendReady 를 1 회 호출.
+// "false" run command 로 fail() 분기를 강제.
+func TestRunnerHandleDeferOnFailureTriggersReady(t *testing.T) {
+	runner, _, _, _ := newRunnerSetup(t, true)
+	h := NewHolder()
+	h.Replace(protocol.AgentConfigData{RunCommands: []string{"false"}})
+	runner.SetHolder(h)
+	fake := &fakeReadySender{}
+	runner.SetReadySender(fake)
+	runner.SetMaxJobs(2)
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	// Handle 가 fail 을 리턴해도 defer 는 실행되어야 한다.
+	_ = runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"})
+	// inFlight 0 + maxJobs 2 → 2 회 송신.
+	if got := fake.count(); got != 2 {
+		t.Fatalf("ReadySender calls=%d want 2", got)
+	}
+}
+
+// F-8 (결정 4): paused=true 일 때 Handle 즉시 거절 분기는 inFlight 증가 없이
+// return 하고 defer 미등록 → maybeSendReady 호출 안 됨.
+func TestRunnerHandlePausedRejectsWithoutReady(t *testing.T) {
+	runner, _, hub, _ := newRunnerSetup(t, true)
+	withNoopBuildHolder(t, runner)
+	fake := &fakeReadySender{}
+	runner.SetReadySender(fake)
+	runner.SetMaxJobs(3)
+	runner.Pause() // paused=true.
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	// paused 거절 분기는 inFlight 미증가 + defer 미등록 → READY 송신 0.
+	if got := fake.count(); got != 0 {
+		t.Fatalf("ReadySender calls=%d want 0 (paused rejection)", got)
+	}
+	// 거절 시 failed STATUS_UPDATE 만 남아 있어야 한다 (Phase 3 결정 11 흐름 유지).
+	statuses := hub.statuses()
+	if len(statuses) != 1 || statuses[0] != "failed" {
+		t.Fatalf("statuses=%v want [failed]", statuses)
+	}
+}
+
+// F-9 (결정적 케이스): Handle 진행 중 Pause() 가 호출되면, defer 의
+// maybeSendReady 가 paused 검사로 송신을 차단한다.
+// — Pause 호출이 maybeSendReady 진입보다 먼저인 결정적 시점만 검사.
+func TestRunnerHandleInFlightPauseBlocksReady(t *testing.T) {
+	runner, _, _, _ := newRunnerSetup(t, true)
+	withNoopBuildHolder(t, runner)
+	fake := &fakeReadySender{}
+	runner.SetReadySender(fake)
+	runner.SetMaxJobs(2)
+	ctx := context.Background()
+	if err := runner.cache.Ensure(ctx); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	// Handle 안에서 paused=true 가 되도록 — 가장 단순한 결정적 케이스는 Handle 시작
+	// 직전이 아니라, Handle 이 inFlight 를 증가시킨 후 Pause 가 들어온 경우.
+	// 본 테스트는 Pause 를 Handle 호출 직전에 두어 paused 검사 분기를 우회 (그
+	// 분기는 F-8 가 검증함). 여기선 Handle 내부에서 paused 가 set 된 케이스로
+	// 정확히 모사하기 어려우므로, defer 직전 Pause 시뮬: Handle 가 정상 끝난 후
+	// maybeSendReady 가 paused 를 보고 0 회 송신.
+	// 트릭: build 가 끝난 직후 Pause 호출되도록 fakeReadySender.onCall 활용 — 단,
+	// 여기서는 Handle 내부에 hook 없으므로 Pause 후 maybeSendReady 직접 호출로
+	// 동등 검증.
+	runner.inFlight.Add(1)
+	defer func() { runner.inFlight.Add(-1) }()
+	runner.Pause()
+	runner.maybeSendReady(ctx)
+	if got := fake.count(); got != 0 {
+		t.Fatalf("ReadySender calls=%d want 0 (paused mid-handle)", got)
+	}
+}
