@@ -90,6 +90,23 @@ go run ./cmd/agent start \
   --label env=home
 ```
 
+#### Private 리포지토리 인증
+
+`--repo-url`이 Private 리포이면 URL에 토큰을 포함합니다:
+
+```bash
+--repo-url=https://사용자명:ghp_토큰값@github.com/owner/repo.git
+```
+
+**GitHub PAT 발급 방법 (Fine-grained, 최소 권한):**
+
+1. GitHub → Settings → Developer settings → **Fine-grained tokens** → Generate new token
+2. **Repository access**: Only select repositories → 해당 리포 선택
+3. **Repository permissions → Contents**: `Read-only`
+4. 나머지는 모두 No access
+
+> Classic PAT를 사용한다면 `repo` 스코프 하나면 됩니다.
+
 | 플래그 | 설명 |
 |---|---|
 | `--hub-url` | Hub WebSocket 주소 (`ws://` 또는 `wss://`) |
@@ -103,7 +120,75 @@ go run ./cmd/agent start \
 
 ---
 
-## 4. GitHub Webhook 설정
+## 4. Docker Compose로 한 번에 실행
+
+Hub + Agent를 `docker compose up` 한 번으로 실행합니다.
+
+### 4-1. .env 설정
+
+```bash
+cp .env.example .env
+```
+
+`.env`에서 아래 두 항목만 필수로 채웁니다:
+
+```bash
+GITHUB_WEBHOOK_SECRET=아무_문자열
+AGENT_REPO_URL=https://github.com/owner/repo.git
+```
+
+Private 리포이면 PAT를 URL에 포함:
+
+```bash
+AGENT_REPO_URL=https://사용자명:ghp_토큰값@github.com/owner/repo.git
+```
+
+**PAT 권한** (Fine-grained 기준):
+- Repository access: 해당 리포만 선택
+- Repository permissions → **Contents: Read-only**
+
+### 4-2. 실행
+
+```bash
+# 마이그레이션 + Hub + Agent 동시 시작
+docker compose up -d
+
+# 로그 확인
+docker compose logs -f
+```
+
+`docker compose up` 실행 시 내부 순서:
+1. `migrate` 서비스 → DB 마이그레이션 자동 실행
+2. `hub` 서비스 시작 → `dev-agent` 자동 등록 (`DEV_AGENT_TOKEN` 고정값 사용)
+3. `agent` 서비스 시작 → Hub에 자동 연결
+
+### 4-3. 대시보드 접속
+
+`http://localhost:3000/admin`
+
+- 사용자: `admin`
+- 비밀번호: `.env`의 `ADMIN_PASSWORD` 값 (기본값 없음 → 미설정 시 인증 없이 접속)
+
+### 4-4. 중지 / 재시작
+
+```bash
+docker compose down          # 중지 (DB 볼륨은 유지)
+docker compose down -v       # 중지 + 볼륨(DB) 삭제
+docker compose restart hub   # Hub만 재시작
+docker compose logs agent    # Agent 로그 확인
+```
+
+### 4-5. Linux에서 advertise-host
+
+Linux는 `host.docker.internal`이 기본 지원되지 않습니다. `.env`에 추가:
+
+```bash
+AGENT_ADVERTISE_HOST=172.17.0.1   # Docker bridge IP (기본)
+```
+
+---
+
+## 5. GitHub Webhook 설정
 
 GitHub 리포지토리 → **Settings** → **Webhooks** → **Add webhook**:
 
@@ -116,7 +201,7 @@ GitHub 리포지토리 → **Settings** → **Webhooks** → **Add webhook**:
 
 ---
 
-## 5. PR 미리보기 전체 흐름
+## 6. PR 미리보기 전체 흐름
 
 ```
 PR 열기
@@ -140,7 +225,7 @@ Agent가 빌드하는 리포지토리의 **루트에 `Dockerfile`이 있어야**
 
 ---
 
-## 6. 관리자 대시보드 기능
+## 7. 관리자 대시보드 기능
 
 | 페이지 | URL | 기능 |
 |---|---|---|
@@ -153,7 +238,7 @@ Agent가 빌드하는 리포지토리의 **루트에 `Dockerfile`이 있어야**
 
 ---
 
-## 7. CLI 서브커맨드
+## 8. CLI 서브커맨드
 
 ### Hub
 
@@ -176,7 +261,7 @@ go run ./cmd/hub --reconcile-interval=2s --stale-assigned-after=3s
 
 ---
 
-## 8. Graceful Shutdown
+## 9. Graceful Shutdown
 
 ### Hub (`Ctrl+C` 또는 `SIGTERM`)
 
@@ -197,7 +282,7 @@ Hub는 이를 DB 상태와 비교해 불일치하는 항목을 자동으로 정�
 
 ---
 
-## 9. 멀티 머신 / 라벨 라우팅
+## 10. 멀티 머신 / 라벨 라우팅
 
 여러 Agent를 다른 라벨로 등록하면 PR의 GitHub Label로 특정 머신에 배포할 수 있습니다.
 
@@ -216,7 +301,7 @@ go run ./cmd/agent start ... --label env=office --label arch=arm64
 
 ---
 
-## 10. Reconciliation (자동 복구)
+## 11. Reconciliation (자동 복구)
 
 Hub는 1분 주기(기본값)로 다음을 수행합니다:
 
@@ -231,7 +316,7 @@ go run ./cmd/hub --reconcile-interval=2s --stale-assigned-after=3s
 
 ---
 
-## 11. 개발 / 테스트
+## 12. 개발 / 테스트
 
 ```bash
 # 전체 테스트
@@ -263,7 +348,7 @@ curl -s -X POST http://localhost:$PORT/webhooks/github \
 
 ---
 
-## 12. 프로덕션 체크리스트
+## 13. 프로덕션 체크리스트
 
 - [ ] **`ADMIN_PASSWORD` 설정** — 미설정 시 대시보드 무인증
 - [ ] **`GITHUB_WEBHOOK_SECRET` 설정** — 미설정 시 Hub 시작 불가
