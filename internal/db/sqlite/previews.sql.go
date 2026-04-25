@@ -67,6 +67,33 @@ func (q *Queries) ClaimPreview(ctx context.Context, arg ClaimPreviewParams) (Pre
 	return i, err
 }
 
+const findPreviewByHost = `-- name: FindPreviewByHost :one
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE pr_number = ? ORDER BY created_at DESC LIMIT 1
+`
+
+func (q *Queries) FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error) {
+	row := q.db.QueryRowContext(ctx, findPreviewByHost, prNumber)
+	var i Preview
+	err := row.Scan(
+		&i.ID,
+		&i.RepoFullName,
+		&i.PrNumber,
+		&i.CommitSha,
+		&i.Branch,
+		&i.Status,
+		&i.AssignedAgentID,
+		&i.ContainerID,
+		&i.AgentHost,
+		&i.AgentPort,
+		&i.PublicUrl,
+		&i.Labels,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPreviewByID = `-- name: GetPreviewByID :one
 SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE id = ?
 `
@@ -195,12 +222,160 @@ func (q *Queries) ListAllPreviews(ctx context.Context) ([]Preview, error) {
 	return items, nil
 }
 
+const listByAgent = `-- name: ListByAgent :many
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews
+WHERE assigned_agent_id = ?
+  AND status IN (/*SLICE:statuses*/?)
+ORDER BY updated_at ASC
+`
+
+type ListByAgentParams struct {
+	AssignedAgentID sql.NullString `json:"assigned_agent_id"`
+	Statuses        []string       `json:"statuses"`
+}
+
+func (q *Queries) ListByAgent(ctx context.Context, arg ListByAgentParams) ([]Preview, error) {
+	query := listByAgent
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.AssignedAgentID)
+	if len(arg.Statuses) > 0 {
+		for _, v := range arg.Statuses {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:statuses*/?", strings.Repeat(",?", len(arg.Statuses))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:statuses*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Preview{}
+	for rows.Next() {
+		var i Preview
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoFullName,
+			&i.PrNumber,
+			&i.CommitSha,
+			&i.Branch,
+			&i.Status,
+			&i.AssignedAgentID,
+			&i.ContainerID,
+			&i.AgentHost,
+			&i.AgentPort,
+			&i.PublicUrl,
+			&i.Labels,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueuedPreviewsForLabels = `-- name: ListQueuedPreviewsForLabels :many
 SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50
 `
 
 func (q *Queries) ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error) {
 	rows, err := q.db.QueryContext(ctx, listQueuedPreviewsForLabels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Preview{}
+	for rows.Next() {
+		var i Preview
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoFullName,
+			&i.PrNumber,
+			&i.CommitSha,
+			&i.Branch,
+			&i.Status,
+			&i.AssignedAgentID,
+			&i.ContainerID,
+			&i.AgentHost,
+			&i.AgentPort,
+			&i.PublicUrl,
+			&i.Labels,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunningPreviewsByAgent = `-- name: ListRunningPreviewsByAgent :many
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'running' AND assigned_agent_id = ? ORDER BY updated_at ASC
+`
+
+func (q *Queries) ListRunningPreviewsByAgent(ctx context.Context, assignedAgentID sql.NullString) ([]Preview, error) {
+	rows, err := q.db.QueryContext(ctx, listRunningPreviewsByAgent, assignedAgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Preview{}
+	for rows.Next() {
+		var i Preview
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoFullName,
+			&i.PrNumber,
+			&i.CommitSha,
+			&i.Branch,
+			&i.Status,
+			&i.AssignedAgentID,
+			&i.ContainerID,
+			&i.AgentHost,
+			&i.AgentPort,
+			&i.PublicUrl,
+			&i.Labels,
+			&i.ErrorMessage,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleAssignedPreviews = `-- name: ListStaleAssignedPreviews :many
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'assigned' AND updated_at < ? ORDER BY updated_at ASC
+`
+
+func (q *Queries) ListStaleAssignedPreviews(ctx context.Context, updatedAt string) ([]Preview, error) {
+	rows, err := q.db.QueryContext(ctx, listStaleAssignedPreviews, updatedAt)
 	if err != nil {
 		return nil, err
 	}

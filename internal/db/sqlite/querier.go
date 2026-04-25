@@ -6,12 +6,14 @@ package sqlitestore
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
 	ClaimPreview(ctx context.Context, arg ClaimPreviewParams) (Preview, error)
 	CreateAgent(ctx context.Context, arg CreateAgentParams) error
 	DeleteAgent(ctx context.Context, id string) error
+	FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error)
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
 	GetAgentByName(ctx context.Context, name string) (Agent, error)
 	GetPreviewByID(ctx context.Context, id string) (Preview, error)
@@ -19,7 +21,10 @@ type Querier interface {
 	InsertPreviewEvent(ctx context.Context, arg InsertPreviewEventParams) error
 	ListAgents(ctx context.Context) ([]Agent, error)
 	ListAllPreviews(ctx context.Context) ([]Preview, error)
+	ListByAgent(ctx context.Context, arg ListByAgentParams) ([]Preview, error)
 	ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error)
+	ListRunningPreviewsByAgent(ctx context.Context, assignedAgentID sql.NullString) ([]Preview, error)
+	ListStaleAssignedPreviews(ctx context.Context, updatedAt string) ([]Preview, error)
 	ResetAllAssignedPreviews(ctx context.Context, updatedAt string) (int64, error)
 	UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) error
 	UpdatePreviewStatus(ctx context.Context, arg UpdatePreviewStatusParams) error

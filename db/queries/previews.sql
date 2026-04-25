@@ -60,3 +60,18 @@ RETURNING *;
 
 -- name: ResetAllAssignedPreviews :execrows
 UPDATE previews SET status = 'queued', assigned_agent_id = NULL, updated_at = ? WHERE status = 'assigned';
+
+-- name: FindPreviewByHost :one
+SELECT * FROM previews WHERE pr_number = ? ORDER BY created_at DESC LIMIT 1;
+
+-- name: ListStaleAssignedPreviews :many
+SELECT * FROM previews WHERE status = 'assigned' AND updated_at < ? ORDER BY updated_at ASC;
+
+-- name: ListRunningPreviewsByAgent :many
+SELECT * FROM previews WHERE status = 'running' AND assigned_agent_id = ? ORDER BY updated_at ASC;
+
+-- name: ListByAgent :many
+SELECT * FROM previews
+WHERE assigned_agent_id = ?
+  AND status IN (sqlc.slice('statuses'))
+ORDER BY updated_at ASC;
