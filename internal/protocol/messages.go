@@ -42,10 +42,15 @@ type Envelope struct {
 }
 
 // HelloData 는 Agent 가 연결 직후 송신하는 HELLO 본문.
+//
+// Phase 3 추가: RunningPreviews 는 omitempty 미적용 (결정 8 / §5-2).
+// 레거시 Agent (Phase 2) 는 이 키 자체를 보내지 않으므로 Hub 측이
+// hasRunningPreviewsKey 헬퍼로 부재를 구분해 동기화 SKIP.
 type HelloData struct {
-	Version       string            `json:"version"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	AdvertiseHost string            `json:"advertise_host,omitempty"`
+	Version         string            `json:"version"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	AdvertiseHost   string            `json:"advertise_host,omitempty"`
+	RunningPreviews []string          `json:"running_previews"`
 }
 
 // WelcomeData 는 Hub 가 HELLO 에 대한 응답으로 보내는 본문.
