@@ -86,6 +86,12 @@ func (f *fakeAgentStore) UpdateStatus(ctx context.Context, id, status string, t 
 	return nil
 }
 func (f *fakeAgentStore) Delete(ctx context.Context, id string) error { return nil }
+func (f *fakeAgentStore) GetBuildConfig(ctx context.Context, id string) ([]string, int, error) {
+	return []string{}, 0, nil
+}
+func (f *fakeAgentStore) SaveBuildConfig(ctx context.Context, id, raw string, port int) error {
+	return nil
+}
 
 // fakeSender 는 SendJobAssign 호출을 capture.
 type fakeSender struct {
