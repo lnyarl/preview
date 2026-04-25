@@ -24,12 +24,12 @@
 </section>
 
 <section>
-  <h3>Build Configuration</h3>
+  <h3>Run Commands</h3>
   <form method="POST" action="/admin/agents/{{.AgentID}}/config">
-    <label for="build_commands">Build commands (one per line)</label>
-    <textarea id="build_commands" name="build_commands" rows="6"
-              placeholder="docker build -t $PREVIEW_IMAGE .">{{.RunCommandsText}}</textarea>
-    <small>Each line runs as <code>sh -c &lt;line&gt;</code> with <code>cwd=worktree</code>. Non-zero exit aborts the build. Leave empty to use the default.</small>
+    <label for="run_commands">Run commands (one per line)</label>
+    <textarea id="run_commands" name="run_commands" rows="6"
+              placeholder="npm install&#10;npm run build&#10;./deploy.sh">{{.RunCommandsText}}</textarea>
+    <small>Each line runs as <code>sh -c &lt;line&gt;</code> in the directory where the repository was checked out. Non-zero exit aborts the run. Leave empty to skip.</small>
 
     <label for="container_port">Container port</label>
     <input type="number" id="container_port" name="container_port"
@@ -39,7 +39,7 @@
 
     <button type="submit">Save</button>
   </form>
-  <small>Changes apply to the <strong>next</strong> build. In-flight builds keep their snapshot.</small>
+  <small>Changes apply to the <strong>next</strong> run. In-flight runs keep their snapshot.</small>
 </section>
 
 <section>
@@ -53,10 +53,9 @@
     </thead>
     <tbody>
       <tr><td><code>$PREVIEW_ID</code></td><td>UUID of the preview</td></tr>
-      <tr><td><code>$PREVIEW_IMAGE</code></td><td><code>preview-&lt;id&gt;:latest</code> &mdash; required image tag</td></tr>
-      <tr><td><code>$PREVIEW_SHA</code></td><td>git commit sha</td></tr>
-      <tr><td><code>$PREVIEW_BRANCH</code></td><td>git branch (may be empty)</td></tr>
-      <tr><td><code>$PORT</code></td><td>resolved container port (default 80)</td></tr>
+      <tr><td><code>$PREVIEW_SHA</code></td><td>Git commit hash</td></tr>
+      <tr><td><code>$PREVIEW_BRANCH</code></td><td>Git branch name (may be empty)</td></tr>
+      <tr><td><code>$PORT</code></td><td>Resolved container port (default 80)</td></tr>
     </tbody>
   </table>
 </section>
