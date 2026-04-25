@@ -1,43 +1,81 @@
 {{define "content"}}
 <style>
+/* ── Step 카드 ───────────────────────────────────────────── */
+.step-card {
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 1.2rem;
+  background: var(--pico-card-sectionning-background-color, #f6f7fb);
+  border-bottom: 1px solid var(--pico-muted-border-color, #ddd);
+}
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  background: var(--pico-primary, #1a73e8);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.step-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--pico-color, #111);
+}
+.step-body {
+  padding: 1.2rem;
+}
+.step-body p:last-child, .step-body ul:last-child { margin-bottom: 0; }
+
 /* ── OS Tabs ─────────────────────────────────────────────── */
 .os-tabs > input[type="radio"] { display: none; }
 .tab-bar {
   display: flex;
   gap: 0;
   border-bottom: 2px solid var(--pico-muted-border-color, #d0d0d0);
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
 }
 .tab-bar label {
-  padding: 0.5rem 1.4rem;
+  padding: 0.45rem 1.2rem;
   cursor: pointer;
   border-radius: 6px 6px 0 0;
   border: 1px solid transparent;
   border-bottom: none;
   font-weight: 500;
+  font-size: 0.9rem;
   color: var(--pico-muted-color, #666);
   transition: background 0.12s;
   user-select: none;
 }
 .tab-bar label:hover { background: var(--pico-card-sectionning-background-color, #f4f4f4); }
-
 #os-linux:checked ~ .tab-bar label[for="os-linux"],
 #os-mac:checked   ~ .tab-bar label[for="os-mac"],
 #os-win:checked   ~ .tab-bar label[for="os-win"] {
-  background: var(--pico-background-color, #fff);
+  background: var(--pico-card-background-color, #fff);
   border-color: var(--pico-muted-border-color, #d0d0d0);
-  border-bottom-color: var(--pico-background-color, #fff);
-  color: var(--pico-color, #111);
+  border-bottom-color: var(--pico-card-background-color, #fff);
+  color: var(--pico-primary, #1a73e8);
   margin-bottom: -2px;
 }
-
 .tab-panels > section { display: none; }
 #os-linux:checked ~ .tab-panels > section:nth-child(1) { display: block; }
 #os-mac:checked   ~ .tab-panels > section:nth-child(2) { display: block; }
 #os-win:checked   ~ .tab-panels > section:nth-child(3) { display: block; }
 
 /* ── Copy button ─────────────────────────────────────────── */
-.code-wrap { position: relative; margin: 0.5rem 0 1rem; }
+.code-wrap { position: relative; margin: 0.4rem 0 1rem; }
 .code-wrap pre { margin: 0; padding-right: 4.5rem; }
 .copy-btn {
   position: absolute;
@@ -48,15 +86,24 @@
   cursor: pointer;
   border: 1px solid var(--pico-muted-border-color, #ccc);
   border-radius: 4px;
-  background: var(--pico-card-background-color, #f8f8f8);
+  background: rgba(255,255,255,0.85);
   color: var(--pico-muted-color, #555);
   line-height: 1.6;
+  backdrop-filter: blur(2px);
 }
 .copy-btn:hover { background: var(--pico-primary-background, #e8f0fe); color: var(--pico-primary, #1a73e8); }
-.copy-btn.ok { color: #2e7d32; border-color: #2e7d32; }
+.copy-btn.ok { color: #2e7d32; border-color: #2e7d32; background: #f0faf0; }
 
 /* ── Misc ────────────────────────────────────────────────── */
-.arch-label { font-size: 0.82rem; font-weight: 600; color: var(--pico-muted-color, #666); margin: 0.8rem 0 0.2rem; }
+.arch-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pico-muted-color, #888);
+  margin: 1rem 0 0.25rem;
+}
+.arch-label:first-child { margin-top: 0; }
 </style>
 
 <script>
@@ -71,117 +118,119 @@ function cp(btn) {
 </script>
 
 {{/* ── 제목 ── */}}
-<hgroup>
-  <h1>Agent <strong>{{.Name}}</strong> 등록 완료</h1>
+<hgroup style="margin-bottom:1.5rem">
+  <h1>🎉 Agent <strong>{{.Name}}</strong> 등록 완료</h1>
+  <p>아래 단계를 따라 Agent를 실행하세요.</p>
 </hgroup>
 
-{{/* ── 토큰 ── */}}
-<article>
-  <header>⚠️ 토큰은 지금만 표시됩니다</header>
-  <p>이 페이지를 벗어나면 다시 볼 수 없습니다. 잃어버리면 Agent를 삭제하고 다시 생성해야 합니다.</p>
-  <div class="code-wrap">
-    <button class="copy-btn" onclick="cp(this)">Copy</button>
-    <pre><code>{{.Token}}</code></pre>
+{{/* ── Step 0: 토큰 ── */}}
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-badge" style="background:#e53935">!</span>
+    <h2 class="step-title">토큰 — 지금만 표시됩니다</h2>
   </div>
-</article>
-
-<hr>
-
-{{/* ── OS 탭 ── */}}
-<div class="os-tabs">
-  <input type="radio" id="os-linux" name="os" checked>
-  <input type="radio" id="os-mac"   name="os">
-  <input type="radio" id="os-win"   name="os">
-
-  <div class="tab-bar">
-    <label for="os-linux">🐧 Linux</label>
-    <label for="os-mac">🍎 macOS</label>
-    <label for="os-win">🪟 Windows</label>
+  <div class="step-body">
+    <p style="margin-bottom:0.5rem">이 페이지를 벗어나면 다시 볼 수 없습니다. 잃어버리면 Agent를 삭제하고 다시 생성해야 합니다.</p>
+    <div class="code-wrap">
+      <button class="copy-btn" onclick="cp(this)">Copy</button>
+      <pre><code>{{.Token}}</code></pre>
+    </div>
   </div>
+</div>
 
-  <div class="tab-panels">
+{{/* ── Step 1+2: 다운로드 + 실행 (OS 탭) ── */}}
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-badge">1</span>
+    <h2 class="step-title">OS를 선택하고 Agent를 실행하세요</h2>
+  </div>
+  <div class="step-body">
 
-    {{/* ── Linux ── */}}
-    <section>
-      {{if .AgentDownloadURL}}
-      <h4>Step 1 — 바이너리 다운로드</h4>
+    <div class="os-tabs">
+      <input type="radio" id="os-linux" name="os" checked>
+      <input type="radio" id="os-mac"   name="os">
+      <input type="radio" id="os-win"   name="os">
 
-      <p class="arch-label">x86_64 (amd64)</p>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-amd64 -o agent
-chmod +x agent</code></pre>
+      <div class="tab-bar">
+        <label for="os-linux">🐧 Linux</label>
+        <label for="os-mac">🍎 macOS</label>
+        <label for="os-win">🪟 Windows</label>
       </div>
 
-      <p class="arch-label">ARM64 (Raspberry Pi, AWS Graviton 등)</p>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-arm64 -o agent
-chmod +x agent</code></pre>
-      </div>
-      {{end}}
+      <div class="tab-panels">
 
-      <h4>Step 2 — Agent 실행</h4>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>./agent start \
+        {{/* ── Linux ── */}}
+        <section>
+          {{if .AgentDownloadURL}}
+          <p style="margin-bottom:0.25rem;font-weight:600">다운로드</p>
+          <p class="arch-label">x86_64 (amd64)</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-amd64 -o agent && chmod +x agent</code></pre>
+          </div>
+          <p class="arch-label">ARM64 (Raspberry Pi, AWS Graviton 등)</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-linux-arm64 -o agent && chmod +x agent</code></pre>
+          </div>
+          <hr style="margin:1rem 0">
+          {{end}}
+          <p style="margin-bottom:0.25rem;font-weight:600">실행</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>./agent start \
   --hub-url=ws://{{.HubHost}}/agent/ws \
   --token={{.Token}} \
   --repo-url=https://github.com/owner/repo.git \
   --advertise-host=$(hostname -I | awk '{print $1}') \
   --label env=local</code></pre>
-      </div>
-      <p><small><code>--advertise-host</code>: Hub가 컨테이너에 접속할 때 사용하는 이 머신의 IP. 자동 감지가 안 되면 직접 입력하세요.</small></p>
-    </section>
+          </div>
+          <p><small>💡 <code>--advertise-host</code>: Hub가 컨테이너에 접속할 때 쓰는 이 머신의 IP. 자동 감지가 안 되면 직접 입력하세요.</small></p>
+        </section>
 
-    {{/* ── macOS ── */}}
-    <section>
-      {{if .AgentDownloadURL}}
-      <h4>Step 1 — 바이너리 다운로드</h4>
-
-      <p class="arch-label">Apple Silicon (M1 / M2 / M3)</p>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-arm64 -o agent
-chmod +x agent</code></pre>
-      </div>
-
-      <p class="arch-label">Intel</p>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-amd64 -o agent
-chmod +x agent</code></pre>
-      </div>
-      {{end}}
-
-      <h4>Step 2 — Agent 실행</h4>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>./agent start \
+        {{/* ── macOS ── */}}
+        <section>
+          {{if .AgentDownloadURL}}
+          <p style="margin-bottom:0.25rem;font-weight:600">다운로드</p>
+          <p class="arch-label">Apple Silicon (M1 / M2 / M3)</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-arm64 -o agent && chmod +x agent</code></pre>
+          </div>
+          <p class="arch-label">Intel</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>curl -fsSL {{.AgentDownloadURL}}/agent-darwin-amd64 -o agent && chmod +x agent</code></pre>
+          </div>
+          <hr style="margin:1rem 0">
+          {{end}}
+          <p style="margin-bottom:0.25rem;font-weight:600">실행</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>./agent start \
   --hub-url=ws://{{.HubHost}}/agent/ws \
   --token={{.Token}} \
   --repo-url=https://github.com/owner/repo.git \
   --advertise-host=$(ipconfig getifaddr en0) \
   --label env=local</code></pre>
-      </div>
-      <p><small>Wi-Fi가 아닌 경우 <code>en0</code>을 <code>en1</code> 등으로 변경하거나 IP를 직접 입력하세요.</small></p>
-    </section>
+          </div>
+          <p><small>💡 Wi-Fi가 아닌 경우 <code>en0</code>을 <code>en1</code> 등으로 변경하거나 IP를 직접 입력하세요.</small></p>
+        </section>
 
-    {{/* ── Windows ── */}}
-    <section>
-      {{if .AgentDownloadURL}}
-      <h4>Step 1 — 바이너리 다운로드 (PowerShell)</h4>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>Invoke-WebRequest -Uri {{.AgentDownloadURL}}/agent-windows-amd64.exe `
-  -OutFile agent.exe</code></pre>
-      </div>
-      {{end}}
-
-      <h4>Step 2 — Agent 실행 (PowerShell)</h4>
-      <div class="code-wrap">
-        <button class="copy-btn" onclick="cp(this)">Copy</button>
-        <pre><code>$IP = (Get-NetIPAddress -AddressFamily IPv4 `
+        {{/* ── Windows ── */}}
+        <section>
+          {{if .AgentDownloadURL}}
+          <p style="margin-bottom:0.25rem;font-weight:600">다운로드 (PowerShell)</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>Invoke-WebRequest -Uri {{.AgentDownloadURL}}/agent-windows-amd64.exe -OutFile agent.exe</code></pre>
+          </div>
+          <hr style="margin:1rem 0">
+          {{end}}
+          <p style="margin-bottom:0.25rem;font-weight:600">실행 (PowerShell)</p>
+          <div class="code-wrap">
+            <button class="copy-btn" onclick="cp(this)">Copy</button>
+            <pre><code>$IP = (Get-NetIPAddress -AddressFamily IPv4 `
        -InterfaceAlias "Ethernet*","Wi-Fi*" |
        Select-Object -First 1).IPAddress
 
@@ -191,60 +240,68 @@ chmod +x agent</code></pre>
   --repo-url=https://github.com/owner/repo.git `
   --advertise-host=$IP `
   --label env=local</code></pre>
+          </div>
+        </section>
+
+      </div>{{/* tab-panels */}}
+    </div>{{/* os-tabs */}}
+  </div>{{/* step-body */}}
+</div>{{/* step-card */}}
+
+{{/* ── Step 2: 저장소 접근 ── */}}
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-badge">2</span>
+    <h2 class="step-title">Private 저장소라면 — 접근 설정</h2>
+  </div>
+  <div class="step-body">
+    <p>Public 저장소라면 이 단계는 건너뛰세요. Private이라면 <code>--repo-url</code>을 아래 형식으로 변경하세요.</p>
+
+    <details>
+      <summary>방법 A — URL에 Personal Access Token 포함 <small>(권장)</small></summary>
+      <br>
+      <p><strong>PAT 발급:</strong> GitHub → Settings → Developer settings → <strong>Fine-grained tokens</strong> → Generate new token</p>
+      <ul>
+        <li><strong>Repository access</strong>: 해당 저장소만 선택</li>
+        <li><strong>Permissions → Contents</strong>: <code>Read-only</code></li>
+        <li>나머지는 모두 No access</li>
+      </ul>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code>https://&lt;GitHub_사용자명&gt;:&lt;PAT&gt;@github.com/owner/repo.git</code></pre>
       </div>
-    </section>
+    </details>
 
-  </div>{{/* tab-panels */}}
-</div>{{/* os-tabs */}}
-
-<hr>
-
-{{/* ── 저장소 접근 설정 ── */}}
-<details>
-  <summary><strong>Private 저장소 접근 설정 (GitHub)</summary>
-  <p>Public 저장소라면 위 <code>--repo-url</code>에 그대로 사용합니다.<br>
-  Private 저장소라면 아래 중 하나를 선택하세요.</p>
-
-  <details>
-    <summary>방법 A — URL에 Personal Access Token 포함 (간단)</summary>
-    <p><strong>PAT 발급:</strong> GitHub → Settings → Developer settings →
-    <strong>Fine-grained tokens</strong> → Generate new token</p>
-    <ul>
-      <li><strong>Repository access</strong>: 해당 저장소만 선택</li>
-      <li><strong>Permissions → Contents</strong>: <code>Read-only</code></li>
-      <li>나머지는 모두 No access</li>
-    </ul>
-    <div class="code-wrap">
-      <button class="copy-btn" onclick="cp(this)">Copy</button>
-      <pre><code>https://&lt;GitHub_사용자명&gt;:&lt;PAT&gt;@github.com/owner/repo.git</code></pre>
-    </div>
-  </details>
-
-  <details>
-    <summary>방법 B — SSH 키</summary>
-    <div class="code-wrap">
-      <button class="copy-btn" onclick="cp(this)">Copy</button>
-      <pre><code># 키 생성 (없는 경우)
+    <details style="margin-top:0.5rem">
+      <summary>방법 B — SSH 키</summary>
+      <br>
+      <div class="code-wrap">
+        <button class="copy-btn" onclick="cp(this)">Copy</button>
+        <pre><code># 키 생성 (없는 경우)
 ssh-keygen -t ed25519 -C "preview-agent"
 
 # 공개 키 → GitHub Settings → SSH keys 에 추가
 cat ~/.ssh/id_ed25519.pub</code></pre>
-    </div>
-    <p>SSH URL 형식: <code>git@github.com:owner/repo.git</code></p>
-  </details>
-</details>
+      </div>
+      <p>SSH URL 형식: <code>git@github.com:owner/repo.git</code></p>
+    </details>
+  </div>
+</div>
 
-<hr>
+{{/* ── Step 3: 확인 ── */}}
+<div class="step-card">
+  <div class="step-header">
+    <span class="step-badge">3</span>
+    <h2 class="step-title">연결 확인</h2>
+  </div>
+  <div class="step-body">
+    <p>Agent를 실행한 뒤 <a href="/admin/agents">Agent 목록</a>에서
+    <strong>{{.Name}}</strong>의 상태가 <code>online</code>으로 바뀌는지 확인하세요.</p>
+    <p style="margin-bottom:0">✅ online 상태가 되면 GitHub에서 PR을 열었을 때 자동으로 빌드가 시작됩니다.</p>
+  </div>
+</div>
 
-{{/* ── 확인 ── */}}
-<details>
-  <summary><strong>연결 확인</strong></summary>
-  <p>Agent를 실행한 뒤 <a href="/admin/agents">Agent 목록</a>에서
-  <code>{{.Name}}</code>의 상태가 <strong>online</strong>으로 바뀌는지 확인하세요.</p>
-  <p>그 다음 GitHub에서 PR을 열면 자동으로 빌드가 시작됩니다.</p>
-</details>
-
-<p style="margin-top:2rem">
+<p style="margin-top:0.5rem">
   <a href="/admin/agents" role="button" class="secondary">← Agent 목록으로</a>
 </p>
 {{end}}
