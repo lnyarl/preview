@@ -30,6 +30,7 @@ type Config struct {
 	PreviewRepoURL    string        // 단일 레포 가정(결정 9). webhook 의 repo_full_name 을 git URL 로 변환.
 	ReconcileInterval   time.Duration // reconciler 주기 (기본 60s).
 	StaleAssignedAfter time.Duration // assigned 임계 (기본 5m).
+	AdminPassword     string        // Phase 3: /admin/* Basic Auth 비밀번호. 빈 값 = 인증 disable + WARN.
 }
 
 // DefaultConfig 는 env 를 읽어 기본값이 채워진 Config 를 만든다.
@@ -45,6 +46,7 @@ func DefaultConfig() Config {
 		PreviewRepoURL:     os.Getenv("PREVIEW_REPO_URL"),
 		ReconcileInterval:  envDuration("RECONCILE_INTERVAL", 60*time.Second),
 		StaleAssignedAfter: envDuration("STALE_ASSIGNED_AFTER", 5*time.Minute),
+		AdminPassword:      os.Getenv("ADMIN_PASSWORD"),
 	}
 }
 
