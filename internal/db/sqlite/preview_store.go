@@ -1,10 +1,12 @@
 // 이 파일의 책임:
 //   - sqlc 가 생성한 Queries 를 감싸 store.PreviewStore 인터페이스를 구현.
 //   - Upsert 트랜잭션: SELECT 사전 조회 → UPSERT → preview_events 분기 INSERT (룰 R1/R2).
-//   - UpdateStatus 트랜잭션: status/error_message 갱신 + preview_events INSERT (룰 R1).
-//   - Step 2/3 에 들어갈 메서드는 stub (store.ErrNotImplementedStep1) 으로 둔다.
+//   - UpdateStatus 트랜잭션: status + 부수 필드(PreviewFields) 갱신 + preview_events INSERT (룰 R1).
+//   - ListQueuedForCandidates / Claim: Step 2 dispatcher 가 사용. Claim 은 race-free CAS.
+//   - ResetAllAssigned: Hub 기동 직후 잔존 'assigned' → 'queued' 일괄 복귀 (인터페이스 외).
+//   - Step 3 에 들어갈 메서드(FindByHost, ListRunningByAgent, ListStaleAssigned, ListByAgent)는 stub.
 //
-// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, §5-5, §5-1-2, 결정 11.
+// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, §5-5, §5-1-2, 결정 5/11.
 package sqlitestore
 
 import (
@@ -138,13 +140,17 @@ func (s *PreviewStore) GetByID(ctx context.Context, id string) (*store.Preview, 
 	return previewRowToDomain(row)
 }
 
-// UpdateStatus 는 단일 트랜잭션에서 status/error_message/updated_at 갱신 +
-// preview_events INSERT 를 수행한다.
+// UpdateStatus 는 단일 트랜잭션에서 status + nullable 부수 필드 갱신 +
+// preview_events INSERT 를 수행한다(결정 11, R1).
 //
-// Step 1 단순화: fromStatus CAS 는 적용하지 않고 항상 갱신한다(결정 11 의 CAS 는
-// Step 2 의 dispatcher 동시성에서 의미를 가짐 — webhook handler 만 호출하는 본 Step
-// 에서는 race 가 발생하지 않는다). fields 의 ErrorMessage 만 활용; 다른 필드는
-// Step 2 의 UpdatePreviewStatusFields 에서 도입한다.
+// fields 가 모든 nil 인 경우와 일부라도 non-nil 인 경우 모두 동일 SQL
+// (UpdatePreviewStatusFields, COALESCE 보호)을 사용한다 — fields 가 nil 이어도
+// 기존 column 값이 유지되므로 안전. ErrorMessage 만은 호출자가 message 인자를
+// 통해 자주 갱신하므로 fields.ErrorMessage 가 nil 이고 message 가 비어있지 않은
+// 경우 message 를 error_message 로 동시에 채운다(webhook handleClose 패턴과 호환).
+//
+// fromStatus="" 이면 CAS 비활성. fromStatus 가 비어있지 않은데 현재 row 의
+// status 와 다르면 ErrStaleState.
 func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, toStatus, message string, now time.Time, fields store.PreviewFields) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -170,20 +176,35 @@ func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, 
 		return store.ErrStaleState
 	}
 
-	errMsg := sql.NullString{}
-	if fields.ErrorMessage != nil {
-		errMsg = sql.NullString{String: *fields.ErrorMessage, Valid: true}
-	} else if row.ErrorMessage.Valid {
-		// 기존 error_message 보존.
-		errMsg = row.ErrorMessage
-	}
 	nowStr := now.UTC().Format(iso8601)
-	if err := qtx.UpdatePreviewStatus(ctx, UpdatePreviewStatusParams{
-		Status:       toStatus,
-		ErrorMessage: errMsg,
-		UpdatedAt:    nowStr,
-		ID:           id,
-	}); err != nil {
+	params := UpdatePreviewStatusFieldsParams{
+		Status:    toStatus,
+		UpdatedAt: nowStr,
+		ID:        id,
+	}
+	if fields.ContainerID != nil {
+		params.ContainerID = sql.NullString{String: *fields.ContainerID, Valid: true}
+	}
+	if fields.AgentHost != nil {
+		params.AgentHost = sql.NullString{String: *fields.AgentHost, Valid: true}
+	}
+	if fields.AgentPort != nil {
+		params.AgentPort = sql.NullInt64{Int64: int64(*fields.AgentPort), Valid: true}
+	}
+	if fields.PublicURL != nil {
+		params.PublicUrl = sql.NullString{String: *fields.PublicURL, Valid: true}
+	}
+	switch {
+	case fields.ErrorMessage != nil:
+		params.ErrorMessage = sql.NullString{String: *fields.ErrorMessage, Valid: true}
+	case message != "":
+		// message 인자를 error_message 로도 사용 (webhook 호환).
+		params.ErrorMessage = sql.NullString{String: message, Valid: true}
+	}
+	if fields.AssignedAgentID != nil {
+		params.AssignedAgentID = sql.NullString{String: *fields.AssignedAgentID, Valid: true}
+	}
+	if _, err := qtx.UpdatePreviewStatusFields(ctx, params); err != nil {
 		return fmt.Errorf("sqlite.UpdateStatus: update: %w", err)
 	}
 
@@ -229,14 +250,150 @@ func (s *PreviewStore) FindByHost(_ context.Context, _ string, _ int) (*store.Pr
 	return nil, store.ErrNotImplementedStep1
 }
 
-// ListQueuedForCandidates 는 Step 2 에서 구현. 본 Step 에서는 stub.
-func (s *PreviewStore) ListQueuedForCandidates(_ context.Context) ([]store.Preview, error) {
-	return nil, store.ErrNotImplementedStep1
+// ListQueuedForCandidates 는 status='queued' 인 모든 preview 를 created_at ASC 로 반환한다.
+// dispatcher 가 이 결과에 라벨 매칭(LabelsMatch)을 적용해 후보를 좁힌다.
+func (s *PreviewStore) ListQueuedForCandidates(ctx context.Context) ([]store.Preview, error) {
+	rows, err := s.q.ListQueuedPreviewsForLabels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListQueuedForCandidates: %w", err)
+	}
+	out := make([]store.Preview, 0, len(rows))
+	for _, r := range rows {
+		p, err := previewRowToDomain(r)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, nil
 }
 
-// Claim 은 Step 2 에서 구현. 본 Step 에서는 stub.
-func (s *PreviewStore) Claim(_ context.Context, _ []string, _ string, _ time.Time) (*store.Preview, error) {
-	return nil, store.ErrNotImplementedStep1
+// Claim 은 candidate ID 슬라이스 중 status='queued' 인 가장 오래된 row 를
+// race-free 로 'assigned' 로 점유한다. 단일 트랜잭션에서:
+//  1. UPDATE ... SELECT LIMIT 1 (sql.ErrNoRows 면 다른 worker 가 선점 → ErrNotFound).
+//  2. preview_events(queued → assigned) INSERT.
+//
+// candidateIDs 가 비어있으면 ErrNotFound 즉시 반환 (sqlc.slice 빈 슬라이스 보호).
+func (s *PreviewStore) Claim(ctx context.Context, candidateIDs []string, agentID string, now time.Time) (*store.Preview, error) {
+	if len(candidateIDs) == 0 {
+		return nil, store.ErrNotFound
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.Claim: begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	qtx := s.q.WithTx(tx)
+
+	nowStr := now.UTC().Format(iso8601)
+	row, err := qtx.ClaimPreview(ctx, ClaimPreviewParams{
+		AssignedAgentID: sql.NullString{String: agentID, Valid: true},
+		UpdatedAt:       nowStr,
+		CandidateIds:    candidateIDs,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, fmt.Errorf("sqlite.Claim: update: %w", err)
+	}
+
+	// R1: queued → assigned event.
+	if err := qtx.InsertPreviewEvent(ctx, InsertPreviewEventParams{
+		ID:         uuid.NewString(),
+		PreviewID:  row.ID,
+		FromStatus: sql.NullString{String: "queued", Valid: true},
+		ToStatus:   "assigned",
+		Message:    "",
+		CreatedAt:  nowStr,
+	}); err != nil {
+		return nil, fmt.Errorf("sqlite.Claim: insert event: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("sqlite.Claim: commit: %w", err)
+	}
+	committed = true
+
+	return previewRowToDomain(row)
+}
+
+// ResetAllAssigned 는 status='assigned' 인 모든 row 를 'queued' 로 일괄 복귀시키고,
+// 각 row 마다 preview_events(assigned → queued, message='hub_restart') INSERT.
+// Hub 기동 직후 1회 호출 (cmd/hub daemon). 인터페이스 외 구체 타입 메서드.
+// 반환: 영향 받은 row 수.
+func (s *PreviewStore) ResetAllAssigned(ctx context.Context) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.ResetAllAssigned: begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// 사전 SELECT — event INSERT 가 row 단위로 필요.
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM previews WHERE status = 'assigned'`)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.ResetAllAssigned: select: %w", err)
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("sqlite.ResetAllAssigned: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("sqlite.ResetAllAssigned: rows close: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("sqlite.ResetAllAssigned: rows: %w", err)
+	}
+
+	if len(ids) == 0 {
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("sqlite.ResetAllAssigned: commit: %w", err)
+		}
+		committed = true
+		return 0, nil
+	}
+
+	nowStr := time.Now().UTC().Format(iso8601)
+	qtx := s.q.WithTx(tx)
+	n, err := qtx.ResetAllAssignedPreviews(ctx, nowStr)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.ResetAllAssigned: update: %w", err)
+	}
+
+	for _, id := range ids {
+		if err := qtx.InsertPreviewEvent(ctx, InsertPreviewEventParams{
+			ID:         uuid.NewString(),
+			PreviewID:  id,
+			FromStatus: sql.NullString{String: "assigned", Valid: true},
+			ToStatus:   "queued",
+			Message:    "hub_restart",
+			CreatedAt:  nowStr,
+		}); err != nil {
+			return 0, fmt.Errorf("sqlite.ResetAllAssigned: insert event: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("sqlite.ResetAllAssigned: commit: %w", err)
+	}
+	committed = true
+	return n, nil
 }
 
 // ListRunningByAgent 는 Step 3 에서 구현. 본 Step 에서는 stub.

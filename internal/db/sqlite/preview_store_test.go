@@ -2,7 +2,9 @@ package sqlitestore
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +26,19 @@ func newTestPreviewStore(t *testing.T) *PreviewStore {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return NewPreviewStore(db)
+}
+
+// seedAgent 는 Claim 의 FK 제약을 만족시키기 위해 더미 agent row 를 INSERT.
+// 다중 host 에 대비해 이름 충돌 시 무시.
+func seedAgent(t *testing.T, ps *PreviewStore, id string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := ps.db.ExecContext(context.Background(),
+		`INSERT INTO agents (id, name, token_hash, labels, status, created_at) VALUES (?, ?, '', '{}', 'offline', ?)`,
+		id, "agent-"+id, now)
+	if err != nil {
+		t.Fatalf("seedAgent %s: %v", id, err)
+	}
 }
 
 func TestPreviewStoreUpsertNewInsertsEvent(t *testing.T) {
@@ -232,17 +247,276 @@ func TestPreviewStoreGetByIDNotFound(t *testing.T) {
 	}
 }
 
-func TestPreviewStoreStubMethodsReturnNotImplemented(t *testing.T) {
+func TestPreviewStoreListQueuedForCandidates(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 3개 INSERT, 가운데 1개를 UpdateStatus 로 teardown 으로 옮김 → 큐에 2개 남음.
+	ids := []string{}
+	for i := 1; i <= 3; i++ {
+		id := uuid.NewString()
+		ids = append(ids, id)
+		p := store.Preview{
+			ID: id, RepoFullName: "acme/web", PrNumber: i,
+			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now.Add(time.Duration(i) * time.Second), UpdatedAt: now.Add(time.Duration(i) * time.Second),
+		}
+		if _, _, err := s.Upsert(ctx, p); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+	if err := s.UpdateStatus(ctx, ids[1], "", "teardown", "", now, store.PreviewFields{}); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	got, err := s.ListQueuedForCandidates(ctx)
+	if err != nil {
+		t.Fatalf("ListQueuedForCandidates: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len=%d want 2", len(got))
+	}
+	// ASC by created_at: ids[0] 가 첫번째.
+	if got[0].ID != ids[0] {
+		t.Fatalf("first=%s want %s", got[0].ID, ids[0])
+	}
+	if got[1].ID != ids[2] {
+		t.Fatalf("second=%s want %s", got[1].ID, ids[2])
+	}
+}
+
+func TestPreviewStoreClaimSuccess(t *testing.T) {
+	s := newTestPreviewStore(t)
+	seedAgent(t, s, "agent-1")
+	seedAgent(t, s, "agent-2")
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	p := store.Preview{
+		ID: id, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, _, err := s.Upsert(ctx, p); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	got, err := s.Claim(ctx, []string{id}, "agent-1", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if got.Status != "assigned" {
+		t.Fatalf("status=%s want assigned", got.Status)
+	}
+	if got.AssignedAgentID == nil || *got.AssignedAgentID != "agent-1" {
+		t.Fatalf("agent_id=%v", got.AssignedAgentID)
+	}
+	// 두 번째 Claim 은 ErrNotFound (이미 assigned).
+	_, err = s.Claim(ctx, []string{id}, "agent-2", now.Add(2*time.Second))
+	if err != store.ErrNotFound {
+		t.Fatalf("second Claim err=%v want ErrNotFound", err)
+	}
+}
+
+func TestPreviewStoreClaimEmptyCandidates(t *testing.T) {
+	s := newTestPreviewStore(t)
+	_, err := s.Claim(context.Background(), nil, "agent-1", time.Now())
+	if err != store.ErrNotFound {
+		t.Fatalf("err=%v want ErrNotFound", err)
+	}
+}
+
+// TestClaimPreviewRace 는 50 goroutine 이 동시에 단일 candidate 를 Claim 시도해도
+// 정확히 1개만 성공함을 검증한다 (NF-Test-Race-1, F-S2-2).
+func TestClaimPreviewRace(t *testing.T) {
+	s := newTestPreviewStore(t)
+	const N = 50
+	for i := 0; i < N; i++ {
+		seedAgent(t, s, fmt.Sprintf("agent-%d", i))
+	}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	p := store.Preview{
+		ID: id, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, _, err := s.Upsert(ctx, p); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	successes := make(chan bool, N)
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := s.Claim(ctx, []string{id}, fmt.Sprintf("agent-%d", i), time.Now())
+			successes <- err == nil
+		}(i)
+	}
+	wg.Wait()
+	close(successes)
+	count := 0
+	for ok := range successes {
+		if ok {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("success count=%d want 1", count)
+	}
+}
+
+// TestClaimPreviewMultiCandidateRace 는 10 candidate × 10 goroutine 시 정확히
+// 10 unique 점유, 중복 0 임을 검증한다 (NF-Test-Race-2, F-S2-2-b).
+func TestClaimPreviewMultiCandidateRace(t *testing.T) {
+	s := newTestPreviewStore(t)
+	const M = 10
+	for i := 0; i < M; i++ {
+		seedAgent(t, s, fmt.Sprintf("agent-%d", i))
+	}
+	ctx := context.Background()
+	now := time.Now().UTC()
+	ids := []string{}
+	for i := 0; i < M; i++ {
+		id := uuid.NewString()
+		ids = append(ids, id)
+		p := store.Preview{
+			ID: id, RepoFullName: "acme/web", PrNumber: i + 1,
+			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now.Add(time.Duration(i) * time.Millisecond), UpdatedAt: now,
+		}
+		if _, _, err := s.Upsert(ctx, p); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+	type res struct {
+		id  string
+		err error
+	}
+	results := make(chan res, M)
+	var wg sync.WaitGroup
+	for i := 0; i < M; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			p, err := s.Claim(ctx, ids, fmt.Sprintf("agent-%d", i), time.Now())
+			if err == nil {
+				results <- res{id: p.ID}
+			} else {
+				results <- res{err: err}
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	seen := map[string]int{}
+	successes := 0
+	for r := range results {
+		if r.err == nil {
+			successes++
+			seen[r.id]++
+		}
+	}
+	if successes != M {
+		t.Fatalf("successes=%d want %d", successes, M)
+	}
+	if len(seen) != M {
+		t.Fatalf("unique ids=%d want %d", len(seen), M)
+	}
+	for id, c := range seen {
+		if c != 1 {
+			t.Fatalf("id=%s claimed %d times (want 1)", id, c)
+		}
+	}
+}
+
+func TestPreviewStoreUpdateStatusFields(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	p := store.Preview{
+		ID: id, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, _, err := s.Upsert(ctx, p); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	host := "127.0.0.1"
+	port := 12345
+	cid := "container-abc"
+	if err := s.UpdateStatus(ctx, id, "", "running", "", now.Add(time.Second), store.PreviewFields{
+		ContainerID: &cid,
+		AgentHost:   &host,
+		AgentPort:   &port,
+	}); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	got, err := s.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != "running" || got.AgentHost == nil || *got.AgentHost != host ||
+		got.AgentPort == nil || *got.AgentPort != port || got.ContainerID == nil || *got.ContainerID != cid {
+		t.Fatalf("fields not persisted: %+v", got)
+	}
+	// 두 번째 호출에서 fields nil → 기존 값 보존.
+	if err := s.UpdateStatus(ctx, id, "running", "teardown", "", now.Add(2*time.Second), store.PreviewFields{}); err != nil {
+		t.Fatalf("UpdateStatus 2: %v", err)
+	}
+	got2, _ := s.GetByID(ctx, id)
+	if got2.AgentHost == nil || *got2.AgentHost != host {
+		t.Fatalf("host not preserved: %v", got2.AgentHost)
+	}
+}
+
+func TestPreviewStoreResetAllAssigned(t *testing.T) {
+	s := newTestPreviewStore(t)
+	seedAgent(t, s, "agent-1")
+	seedAgent(t, s, "agent-2")
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// 2개 assigned + 1개 queued 상태 만들기.
+	ids := []string{}
+	for i := 0; i < 3; i++ {
+		id := uuid.NewString()
+		ids = append(ids, id)
+		p := store.Preview{
+			ID: id, RepoFullName: "acme/web", PrNumber: i + 1,
+			CommitSha: "abc", Labels: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+		}
+		if _, _, err := s.Upsert(ctx, p); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+	}
+	if _, err := s.Claim(ctx, []string{ids[0]}, "agent-1", now); err != nil {
+		t.Fatalf("Claim 1: %v", err)
+	}
+	if _, err := s.Claim(ctx, []string{ids[1]}, "agent-2", now); err != nil {
+		t.Fatalf("Claim 2: %v", err)
+	}
+	n, err := s.ResetAllAssigned(ctx)
+	if err != nil {
+		t.Fatalf("ResetAllAssigned: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("n=%d want 2", n)
+	}
+	for _, id := range ids[:2] {
+		got, _ := s.GetByID(ctx, id)
+		if got.Status != "queued" {
+			t.Fatalf("id=%s status=%s want queued", id, got.Status)
+		}
+		// 이벤트 마지막은 assigned → queued.
+		evs, _ := s.ListPreviewEvents(ctx, id)
+		last := evs[len(evs)-1]
+		if last.FromStatus == nil || *last.FromStatus != "assigned" || last.ToStatus != "queued" {
+			t.Fatalf("id=%s last event=%+v", id, last)
+		}
+	}
+}
+
+func TestPreviewStoreStep3StubsReturnNotImplemented(t *testing.T) {
 	s := newTestPreviewStore(t)
 	ctx := context.Background()
 	if _, err := s.FindByHost(ctx, "x", 1); err != store.ErrNotImplementedStep1 {
 		t.Fatalf("FindByHost err=%v", err)
-	}
-	if _, err := s.ListQueuedForCandidates(ctx); err != store.ErrNotImplementedStep1 {
-		t.Fatalf("ListQueuedForCandidates err=%v", err)
-	}
-	if _, err := s.Claim(ctx, []string{"x"}, "a", time.Now()); err != store.ErrNotImplementedStep1 {
-		t.Fatalf("Claim err=%v", err)
 	}
 	if _, err := s.ListRunningByAgent(ctx, "a"); err != store.ErrNotImplementedStep1 {
 		t.Fatalf("ListRunningByAgent err=%v", err)
