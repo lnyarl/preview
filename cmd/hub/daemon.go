@@ -15,7 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lnyarl/preview/internal/db/sqlite"
+	"github.com/joho/godotenv"
+	sqlitestore "github.com/lnyarl/preview/internal/db/sqlite"
 	"github.com/lnyarl/preview/internal/hub"
 	"github.com/lnyarl/preview/internal/hub/token"
 )
@@ -32,7 +33,7 @@ func runDaemon(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-
+	_ = godotenv.Load() // .env 없어도 계속 진행 (env 변수로 직접 설정 가능)
 	cfg := hub.DefaultConfig()
 	if reconcileInterval > 0 {
 		cfg.ReconcileInterval = reconcileInterval
