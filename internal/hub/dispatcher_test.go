@@ -108,7 +108,7 @@ func (f *fakeSender) SendJobAssign(ctx context.Context, agentID string, p store.
 func newTestDispatcher(t *testing.T, ps store.PreviewStore, as store.AgentStore, sender JobSender) *Dispatcher {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(discardWriter{}, &slog.HandlerOptions{Level: slog.LevelError}))
-	d := NewDispatcher(as, ps, sender, nil, logger)
+	d := NewDispatcher(as, ps, sender, logger)
 	d.now = func() time.Time { return time.Unix(0, 0) }
 	return d
 }

@@ -28,17 +28,11 @@ type JobSender interface {
 	SendJobAssign(ctx context.Context, agentID string, p store.Preview) error
 }
 
-// RepoURLResolver 는 preview 의 repo_full_name 을 git clone URL 로 변환한다.
-// 단순 구현은 PREVIEW_REPO_URL env 의 single-repo 매핑이지만, multi-repo 대비를
-// 위해 함수 시그니처로 추상화.
-type RepoURLResolver func(repoFullName string) string
-
 // Dispatcher 는 READY → JOB_ASSIGN 매칭/할당 로직을 보관한다.
 type Dispatcher struct {
 	AgentStore   store.AgentStore
 	PreviewStore store.PreviewStore
 	Sender       JobSender
-	ResolveRepo  RepoURLResolver
 	Logger       *slog.Logger
 	now          func() time.Time
 	paused       atomic.Bool // Phase 3: Pause() 호출 후 신규 OnReady 즉시 no-op.
@@ -51,17 +45,13 @@ func (d *Dispatcher) Pause() { d.paused.Store(true) }
 // Paused 는 현재 paused 여부를 반환한다 (테스트/진단용).
 func (d *Dispatcher) Paused() bool { return d.paused.Load() }
 
-// NewDispatcher 는 Dispatcher 를 조립한다. resolve 가 nil 이면 repo_full_name
-// 을 그대로 RepoURL 로 echo (placeholder, Step 2 의 단위 테스트 편의).
-func NewDispatcher(as store.AgentStore, ps store.PreviewStore, sender JobSender, resolve RepoURLResolver, logger *slog.Logger) *Dispatcher {
-	if resolve == nil {
-		resolve = func(s string) string { return s }
-	}
+// NewDispatcher 는 Dispatcher 를 조립한다 (결정 6: RepoURLResolver 제거).
+// JobAssignData.RepoURL 은 preview.RepoCloneURL 을 직접 사용한다.
+func NewDispatcher(as store.AgentStore, ps store.PreviewStore, sender JobSender, logger *slog.Logger) *Dispatcher {
 	return &Dispatcher{
 		AgentStore:   as,
 		PreviewStore: ps,
 		Sender:       sender,
-		ResolveRepo:  resolve,
 		Logger:       logger,
 		now:          func() time.Time { return time.Now().UTC() },
 	}
@@ -117,8 +107,13 @@ func (d *Dispatcher) OnReady(ctx context.Context, agentID string) error {
 }
 
 // JobAssignFromPreview 는 store.Preview 를 JobAssignData 로 변환한다.
+// RepoURL 은 preview.RepoCloneURL 우선, 비어있으면 RepoFullName fallback (결정 6/7).
 // JobSender 구현체가 이 헬퍼를 호출해 wire envelope 를 만든다.
-func JobAssignFromPreview(p store.Preview, repoURL string) protocol.JobAssignData {
+func JobAssignFromPreview(p store.Preview) protocol.JobAssignData {
+	repoURL := p.RepoCloneURL
+	if repoURL == "" {
+		repoURL = p.RepoFullName
+	}
 	return protocol.JobAssignData{
 		PreviewID:    p.ID,
 		RepoFullName: p.RepoFullName,

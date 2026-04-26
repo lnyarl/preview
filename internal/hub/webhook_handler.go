@@ -52,6 +52,7 @@ type pullRequestEvent struct {
 	} `json:"pull_request"`
 	Repository struct {
 		FullName string `json:"full_name"`
+		CloneURL string `json:"clone_url"` // Phase 6: git clone URL (결정 6)
 	} `json:"repository"`
 }
 
@@ -223,6 +224,9 @@ func (h *WebhookHandler) handleUpsert(w http.ResponseWriter, ctx context.Context
 	now := h.now()
 	labels := labelsFromPR(p)
 	id := uuid.NewString()
+	if p.Repository.CloneURL == "" {
+		h.Logger.Warn("webhook_clone_url_missing", "repo", p.Repository.FullName, "pr", prNum)
+	}
 	preview := store.Preview{
 		ID:           id,
 		RepoFullName: p.Repository.FullName,
@@ -230,6 +234,7 @@ func (h *WebhookHandler) handleUpsert(w http.ResponseWriter, ctx context.Context
 		CommitSha:    p.PullRequest.Head.SHA,
 		Branch:       p.PullRequest.Head.Ref,
 		Labels:       labels,
+		RepoCloneURL: p.Repository.CloneURL,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

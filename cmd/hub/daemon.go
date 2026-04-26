@@ -108,17 +108,9 @@ func runDaemon(args []string) error {
 	ws.SetPreviewStore(previewStore)
 
 	// Phase 2 wiring: Dispatcher (READY → JOB_ASSIGN) + StatusUpdater.
-	// resolveRepo 는 PREVIEW_REPO_URL env 가 있으면 그 값으로 echo, 없으면
-	// repo_full_name 자체를 fallback (file:///... 같은 fixture 환경 호환).
-	repoURL := cfg.PreviewRepoURL
-	resolveRepo := func(repoFullName string) string {
-		if repoURL != "" {
-			return repoURL
-		}
-		return repoFullName
-	}
-	jobSender := hub.NewWSJobSender(reg, resolveRepo)
-	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, resolveRepo, logger)
+	// Phase 6 (결정 6): RepoURLResolver 제거. RepoURL = preview.RepoCloneURL (webhook 에서 추출).
+	jobSender := hub.NewWSJobSender(reg)
+	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, logger)
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)

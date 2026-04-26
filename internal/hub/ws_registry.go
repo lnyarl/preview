@@ -93,18 +93,14 @@ func (r *ConnRegistry) OnlineAgentIDs() map[string]bool {
 }
 
 // WSJobSender 는 Dispatcher.JobSender 를 ConnRegistry 위에 구현한다.
-// resolveRepo 는 preview.RepoFullName → git URL 변환 (multi-repo 대비, 본 Phase 는 단일).
+// Phase 6 (결정 6): RepoURLResolver 제거 — preview.RepoCloneURL 을 직접 사용.
 type WSJobSender struct {
-	Registry    *ConnRegistry
-	ResolveRepo RepoURLResolver
+	Registry *ConnRegistry
 }
 
-// NewWSJobSender 는 WSJobSender 를 조립한다. resolve 가 nil 이면 echo.
-func NewWSJobSender(reg *ConnRegistry, resolve RepoURLResolver) *WSJobSender {
-	if resolve == nil {
-		resolve = func(s string) string { return s }
-	}
-	return &WSJobSender{Registry: reg, ResolveRepo: resolve}
+// NewWSJobSender 는 WSJobSender 를 조립한다.
+func NewWSJobSender(reg *ConnRegistry) *WSJobSender {
+	return &WSJobSender{Registry: reg}
 }
 
 // SendJobAssign 은 agentID 의 WS 에 JOB_ASSIGN envelope 를 송신한다.
@@ -114,7 +110,7 @@ func (s *WSJobSender) SendJobAssign(ctx context.Context, agentID string, p store
 	if c == nil {
 		return fmt.Errorf("ws_job_sender: agent %s not connected", agentID)
 	}
-	data := JobAssignFromPreview(p, s.ResolveRepo(p.RepoFullName))
+	data := JobAssignFromPreview(p)
 	env, err := protocol.NewEnvelope(protocol.TypeJobAssign, data)
 	if err != nil {
 		return fmt.Errorf("ws_job_sender: envelope: %w", err)
