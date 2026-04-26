@@ -1,0 +1,5 @@
+ALTER TABLE agents ADD COLUMN container_port INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agents ADD COLUMN run_commands TEXT NOT NULL DEFAULT '';
+ALTER TABLE previews ADD COLUMN public_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE previews DROP COLUMN preview_urls;
+ALTER TABLE previews DROP COLUMN repo_clone_url;

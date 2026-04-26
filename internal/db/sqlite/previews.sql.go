@@ -23,7 +23,7 @@ WHERE id = (
   ORDER BY p.created_at ASC
   LIMIT 1
 )
-RETURNING id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at
+RETURNING id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls
 `
 
 type ClaimPreviewParams struct {
@@ -58,17 +58,18 @@ func (q *Queries) ClaimPreview(ctx context.Context, arg ClaimPreviewParams) (Pre
 		&i.ContainerID,
 		&i.AgentHost,
 		&i.AgentPort,
-		&i.PublicUrl,
 		&i.Labels,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RepoCloneUrl,
+		&i.PreviewUrls,
 	)
 	return i, err
 }
 
 const findPreviewByHost = `-- name: FindPreviewByHost :one
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE pr_number = ? ORDER BY created_at DESC LIMIT 1
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews WHERE pr_number = ? ORDER BY created_at DESC LIMIT 1
 `
 
 func (q *Queries) FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error) {
@@ -85,17 +86,18 @@ func (q *Queries) FindPreviewByHost(ctx context.Context, prNumber int64) (Previe
 		&i.ContainerID,
 		&i.AgentHost,
 		&i.AgentPort,
-		&i.PublicUrl,
 		&i.Labels,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RepoCloneUrl,
+		&i.PreviewUrls,
 	)
 	return i, err
 }
 
 const getPreviewByID = `-- name: GetPreviewByID :one
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE id = ?
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews WHERE id = ?
 `
 
 func (q *Queries) GetPreviewByID(ctx context.Context, id string) (Preview, error) {
@@ -112,17 +114,18 @@ func (q *Queries) GetPreviewByID(ctx context.Context, id string) (Preview, error
 		&i.ContainerID,
 		&i.AgentHost,
 		&i.AgentPort,
-		&i.PublicUrl,
 		&i.Labels,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RepoCloneUrl,
+		&i.PreviewUrls,
 	)
 	return i, err
 }
 
 const getPreviewByRepoAndPR = `-- name: GetPreviewByRepoAndPR :one
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE repo_full_name = ? AND pr_number = ?
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews WHERE repo_full_name = ? AND pr_number = ?
 `
 
 type GetPreviewByRepoAndPRParams struct {
@@ -144,11 +147,12 @@ func (q *Queries) GetPreviewByRepoAndPR(ctx context.Context, arg GetPreviewByRep
 		&i.ContainerID,
 		&i.AgentHost,
 		&i.AgentPort,
-		&i.PublicUrl,
 		&i.Labels,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RepoCloneUrl,
+		&i.PreviewUrls,
 	)
 	return i, err
 }
@@ -180,7 +184,7 @@ func (q *Queries) InsertPreviewEvent(ctx context.Context, arg InsertPreviewEvent
 }
 
 const listAllPreviews = `-- name: ListAllPreviews :many
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews ORDER BY created_at DESC
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews ORDER BY created_at DESC
 `
 
 func (q *Queries) ListAllPreviews(ctx context.Context) ([]Preview, error) {
@@ -203,11 +207,12 @@ func (q *Queries) ListAllPreviews(ctx context.Context) ([]Preview, error) {
 			&i.ContainerID,
 			&i.AgentHost,
 			&i.AgentPort,
-			&i.PublicUrl,
 			&i.Labels,
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RepoCloneUrl,
+			&i.PreviewUrls,
 		); err != nil {
 			return nil, err
 		}
@@ -223,7 +228,7 @@ func (q *Queries) ListAllPreviews(ctx context.Context) ([]Preview, error) {
 }
 
 const listByAgent = `-- name: ListByAgent :many
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews
 WHERE assigned_agent_id = ?
   AND status IN (/*SLICE:statuses*/?)
 ORDER BY updated_at ASC
@@ -265,11 +270,12 @@ func (q *Queries) ListByAgent(ctx context.Context, arg ListByAgentParams) ([]Pre
 			&i.ContainerID,
 			&i.AgentHost,
 			&i.AgentPort,
-			&i.PublicUrl,
 			&i.Labels,
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RepoCloneUrl,
+			&i.PreviewUrls,
 		); err != nil {
 			return nil, err
 		}
@@ -328,7 +334,7 @@ func (q *Queries) ListPreviewEvents(ctx context.Context, arg ListPreviewEventsPa
 }
 
 const listQueuedPreviewsForLabels = `-- name: ListQueuedPreviewsForLabels :many
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50
 `
 
 func (q *Queries) ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error) {
@@ -351,11 +357,12 @@ func (q *Queries) ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, e
 			&i.ContainerID,
 			&i.AgentHost,
 			&i.AgentPort,
-			&i.PublicUrl,
 			&i.Labels,
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RepoCloneUrl,
+			&i.PreviewUrls,
 		); err != nil {
 			return nil, err
 		}
@@ -371,7 +378,7 @@ func (q *Queries) ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, e
 }
 
 const listRunningPreviewsByAgent = `-- name: ListRunningPreviewsByAgent :many
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'running' AND assigned_agent_id = ? ORDER BY updated_at ASC
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews WHERE status = 'running' AND assigned_agent_id = ? ORDER BY updated_at ASC
 `
 
 func (q *Queries) ListRunningPreviewsByAgent(ctx context.Context, assignedAgentID sql.NullString) ([]Preview, error) {
@@ -394,11 +401,12 @@ func (q *Queries) ListRunningPreviewsByAgent(ctx context.Context, assignedAgentI
 			&i.ContainerID,
 			&i.AgentHost,
 			&i.AgentPort,
-			&i.PublicUrl,
 			&i.Labels,
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RepoCloneUrl,
+			&i.PreviewUrls,
 		); err != nil {
 			return nil, err
 		}
@@ -414,7 +422,7 @@ func (q *Queries) ListRunningPreviewsByAgent(ctx context.Context, assignedAgentI
 }
 
 const listStaleAssignedPreviews = `-- name: ListStaleAssignedPreviews :many
-SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at FROM previews WHERE status = 'assigned' AND updated_at < ? ORDER BY updated_at ASC
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls FROM previews WHERE status = 'assigned' AND updated_at < ? ORDER BY updated_at ASC
 `
 
 func (q *Queries) ListStaleAssignedPreviews(ctx context.Context, updatedAt string) ([]Preview, error) {
@@ -437,11 +445,12 @@ func (q *Queries) ListStaleAssignedPreviews(ctx context.Context, updatedAt strin
 			&i.ContainerID,
 			&i.AgentHost,
 			&i.AgentPort,
-			&i.PublicUrl,
 			&i.Labels,
 			&i.ErrorMessage,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RepoCloneUrl,
+			&i.PreviewUrls,
 		); err != nil {
 			return nil, err
 		}
@@ -498,7 +507,7 @@ SET status = ?,
     container_id = COALESCE(?, container_id),
     agent_host = COALESCE(?, agent_host),
     agent_port = COALESCE(?, agent_port),
-    public_url = COALESCE(?, public_url),
+    preview_urls = COALESCE(?, preview_urls),
     error_message = COALESCE(?, error_message),
     assigned_agent_id = COALESCE(?, assigned_agent_id)
 WHERE id = ?
@@ -510,7 +519,7 @@ type UpdatePreviewStatusFieldsParams struct {
 	ContainerID     sql.NullString `json:"container_id"`
 	AgentHost       sql.NullString `json:"agent_host"`
 	AgentPort       sql.NullInt64  `json:"agent_port"`
-	PublicUrl       sql.NullString `json:"public_url"`
+	PreviewUrls     string         `json:"preview_urls"`
 	ErrorMessage    sql.NullString `json:"error_message"`
 	AssignedAgentID sql.NullString `json:"assigned_agent_id"`
 	ID              string         `json:"id"`
@@ -523,7 +532,7 @@ func (q *Queries) UpdatePreviewStatusFields(ctx context.Context, arg UpdatePrevi
 		arg.ContainerID,
 		arg.AgentHost,
 		arg.AgentPort,
-		arg.PublicUrl,
+		arg.PreviewUrls,
 		arg.ErrorMessage,
 		arg.AssignedAgentID,
 		arg.ID,
@@ -537,15 +546,16 @@ func (q *Queries) UpdatePreviewStatusFields(ctx context.Context, arg UpdatePrevi
 const upsertPreview = `-- name: UpsertPreview :one
 INSERT INTO previews (
   id, repo_full_name, pr_number, commit_sha, branch,
-  status, labels, created_at, updated_at
+  status, labels, repo_clone_url, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
 ON CONFLICT(repo_full_name, pr_number) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha,
   branch = EXCLUDED.branch,
   labels = EXCLUDED.labels,
+  repo_clone_url = EXCLUDED.repo_clone_url,
   updated_at = EXCLUDED.updated_at
-RETURNING id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, public_url, labels, error_message, created_at, updated_at
+RETURNING id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls
 `
 
 type UpsertPreviewParams struct {
@@ -555,6 +565,7 @@ type UpsertPreviewParams struct {
 	CommitSha    string `json:"commit_sha"`
 	Branch       string `json:"branch"`
 	Labels       string `json:"labels"`
+	RepoCloneUrl string `json:"repo_clone_url"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
 }
@@ -567,6 +578,7 @@ func (q *Queries) UpsertPreview(ctx context.Context, arg UpsertPreviewParams) (P
 		arg.CommitSha,
 		arg.Branch,
 		arg.Labels,
+		arg.RepoCloneUrl,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -582,11 +594,12 @@ func (q *Queries) UpsertPreview(ctx context.Context, arg UpsertPreviewParams) (P
 		&i.ContainerID,
 		&i.AgentHost,
 		&i.AgentPort,
-		&i.PublicUrl,
 		&i.Labels,
 		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RepoCloneUrl,
+		&i.PreviewUrls,
 	)
 	return i, err
 }

@@ -40,6 +40,10 @@ type AgentStore interface {
 // Preview 는 previews 테이블에 대응하는 도메인 엔티티.
 // nullable 필드는 포인터 또는 zero value 로 표현한다. JSON 직렬화 시
 // internal/hub 의 PreviewView DTO 가 명시 변환을 담당한다.
+//
+// Phase 6: PublicURL 제거. 대신 RepoCloneURL (webhook 에서 추출한 git clone URL)
+// 과 PreviewURLs (Agent 가 .preview.yml 기반으로 산출한 service→URL JSON 직렬화
+// 문자열) 를 도입한다 — non-nullable string, 기본값 "".
 type Preview struct {
 	ID              string
 	RepoFullName    string
@@ -51,7 +55,8 @@ type Preview struct {
 	ContainerID     *string
 	AgentHost       *string
 	AgentPort       *int
-	PublicURL       *string
+	RepoCloneURL    string
+	PreviewURLs     string
 	Labels          []string
 	ErrorMessage    *string
 	CreatedAt       time.Time
@@ -65,11 +70,14 @@ type Preview struct {
 // Phase 2 Step 1 에서는 정의만 도입한다. UpdateStatus 가 본 구조체를 받지만
 // 본 Step 의 sqlc 구현은 status/error_message/updated_at 만 갱신하므로
 // 다른 필드들은 무시한다(시그니처만 §5-1 정합 유지).
+//
+// Phase 6: PublicURL 제거, PreviewURLs 도입. PreviewURLs 은 Agent 가 산출한
+// service→URL 매핑의 직렬화 문자열(현재 단계에서는 raw JSON 그대로 통과).
 type PreviewFields struct {
 	ContainerID     *string
 	AgentHost       *string
 	AgentPort       *int
-	PublicURL       *string
+	PreviewURLs     *string
 	ErrorMessage    *string
 	AssignedAgentID *string
 }

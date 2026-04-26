@@ -97,6 +97,7 @@ func (s *PreviewStore) Upsert(ctx context.Context, p store.Preview) (created boo
 		CommitSha:    p.CommitSha,
 		Branch:       p.Branch,
 		Labels:       labelsJSON,
+		RepoCloneUrl: p.RepoCloneURL,
 		CreatedAt:    createdAt,
 		UpdatedAt:    now,
 	}); err != nil {
@@ -144,10 +145,17 @@ func (s *PreviewStore) GetByID(ctx context.Context, id string) (*store.Preview, 
 // preview_events INSERT 를 수행한다(결정 11, R1).
 //
 // fields 가 모든 nil 인 경우와 일부라도 non-nil 인 경우 모두 동일 SQL
-// (UpdatePreviewStatusFields, COALESCE 보호)을 사용한다 — fields 가 nil 이어도
-// 기존 column 값이 유지되므로 안전. ErrorMessage 만은 호출자가 message 인자를
-// 통해 자주 갱신하므로 fields.ErrorMessage 가 nil 이고 message 가 비어있지 않은
-// 경우 message 를 error_message 로 동시에 채운다(webhook handleClose 패턴과 호환).
+// (UpdatePreviewStatusFields, COALESCE 보호)을 사용한다 — nullable 컬럼들은
+// fields 가 nil 이어도 기존 column 값이 유지되므로 안전. ErrorMessage 만은
+// 호출자가 message 인자를 통해 자주 갱신하므로 fields.ErrorMessage 가 nil 이고
+// message 가 비어있지 않은 경우 message 를 error_message 로 동시에 채운다
+// (webhook handleClose 패턴과 호환).
+//
+// Phase 6: preview_urls 는 NOT NULL TEXT 컬럼(default '')이므로 sqlc 생성 파라미터
+// 가 plain string 이다. fields.PreviewURLs 가 nil 일 때 ""를 전달하게 되며
+// COALESCE('', preview_urls) = '' 로 기존 값이 사실상 빈 문자열로 덮인다.
+// 따라서 PreviewURLs 를 보존하려면 호출자가 매번 명시적으로 fields.PreviewURLs
+// 를 채워야 한다(차후 step 에서 status_update.go 에서 일관 처리).
 //
 // fromStatus="" 이면 CAS 비활성. fromStatus 가 비어있지 않은데 현재 row 의
 // status 와 다르면 ErrStaleState.
@@ -191,8 +199,8 @@ func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, 
 	if fields.AgentPort != nil {
 		params.AgentPort = sql.NullInt64{Int64: int64(*fields.AgentPort), Valid: true}
 	}
-	if fields.PublicURL != nil {
-		params.PublicUrl = sql.NullString{String: *fields.PublicURL, Valid: true}
+	if fields.PreviewURLs != nil {
+		params.PreviewUrls = *fields.PreviewURLs
 	}
 	switch {
 	case fields.ErrorMessage != nil:
@@ -590,10 +598,8 @@ func previewRowToDomain(r Preview) (*store.Preview, error) {
 		v := int(r.AgentPort.Int64)
 		p.AgentPort = &v
 	}
-	if r.PublicUrl.Valid {
-		v := r.PublicUrl.String
-		p.PublicURL = &v
-	}
+	p.RepoCloneURL = r.RepoCloneUrl
+	p.PreviewURLs = r.PreviewUrls
 	if r.ErrorMessage.Valid {
 		v := r.ErrorMessage.String
 		p.ErrorMessage = &v

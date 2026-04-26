@@ -3,10 +3,12 @@
 //   - UNIQUE 제약(name) 위반을 store.ErrDuplicate 로 번역.
 //   - RowsAffected=0 을 store.ErrNotFound 로 승격 (Update/Delete).
 //   - Phase 1 운영 특수 경로: ResetAllOnline (인터페이스 밖, 결정 11).
-//   - Phase 4: GetBuildConfig / SaveBuildConfig — run_commands NULL/empty/0 sentinel 처리.
+//
+// Phase 4 의 GetBuildConfig / SaveBuildConfig 경로는 Phase 6 에서 제거되었다
+// (.preview.yml 기반 in-repo build 으로 이행, 결정 13).
 //
 // 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-1, §5-1-1, 결정 10/11,
-//       docs/specs/phase-4-agent-build-config.md §4-1.
+//       docs/specs/phase-6-docker-native.md.
 package sqlitestore
 
 import (

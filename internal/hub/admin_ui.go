@@ -488,10 +488,10 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			agentLine = fmt.Sprintf("%s (%s:%d)", *p.AssignedAgentID, *p.AgentHost, *p.AgentPort)
 		}
 	}
-	publicURL := ""
-	if p.PublicURL != nil {
-		publicURL = *p.PublicURL
-	}
+	// Phase 6: PublicURL 컬럼이 사라지고 PreviewURLs (JSON 직렬화 문자열) 가 들어왔다.
+	// 본 commit 에서는 템플릿 변경을 미루기 위해 raw 문자열을 그대로 표시한다 —
+	// 다음 commit 에서 service→URL 매핑 렌더로 교체.
+	publicURL := p.PreviewURLs
 	rebuildEnabled := p.Status == "done" || p.Status == "failed"
 	conflict := r.URL.Query().Get("msg")
 	view := previewDetailView{
@@ -550,12 +550,14 @@ func (h *AdminUIHandler) previewRebuild(w http.ResponseWriter, r *http.Request) 
 	zeroPort := 0
 	emptyURL := ""
 	emptyErr := ""
+	// Phase 6: PublicURL → PreviewURLs (NOT NULL 'TEXT', default '').
+	// rebuild 시 이전 preview_urls 도 함께 초기화한다.
 	fields := store.PreviewFields{
 		AssignedAgentID: &emptyAssign,
 		ContainerID:     &emptyContainer,
 		AgentHost:       &emptyHost,
 		AgentPort:       &zeroPort,
-		PublicURL:       &emptyURL,
+		PreviewURLs:     &emptyURL,
 		ErrorMessage:    &emptyErr,
 	}
 	if err := h.PreviewStore.UpdateStatus(r.Context(), id, p.Status, "queued",

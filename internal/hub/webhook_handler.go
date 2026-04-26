@@ -107,6 +107,9 @@ func (h *WebhookHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender 
 func (h *WebhookHandler) SetCacheNotifier(n PreviewCacheNotifier) { h.CacheNotifier = n }
 
 // PreviewView 는 /admin/previews 응답 DTO. nullable 필드는 *string/*int 로 명시.
+//
+// Phase 6: public_url 제거. preview_urls (Agent 가 산출한 service→URL 매핑의 raw
+// JSON 직렬화 문자열) 와 repo_clone_url (webhook 에서 추출한 git clone URL) 추가.
 type PreviewView struct {
 	ID              string   `json:"id"`
 	RepoFullName    string   `json:"repo_full_name"`
@@ -118,7 +121,8 @@ type PreviewView struct {
 	ContainerID     *string  `json:"container_id"`
 	AgentHost       *string  `json:"agent_host"`
 	AgentPort       *int     `json:"agent_port"`
-	PublicURL       *string  `json:"public_url"`
+	RepoCloneURL    string   `json:"repo_clone_url"`
+	PreviewURLs     string   `json:"preview_urls"`
 	Labels          []string `json:"labels"`
 	ErrorMessage    *string  `json:"error_message"`
 	CreatedAt       string   `json:"created_at"`
@@ -143,7 +147,8 @@ func PreviewToView(p store.Preview) PreviewView {
 		ContainerID:     p.ContainerID,
 		AgentHost:       p.AgentHost,
 		AgentPort:       p.AgentPort,
-		PublicURL:       p.PublicURL,
+		RepoCloneURL:    p.RepoCloneURL,
+		PreviewURLs:     p.PreviewURLs,
 		Labels:          labels,
 		ErrorMessage:    p.ErrorMessage,
 		CreatedAt:       p.CreatedAt.UTC().Format(time.RFC3339Nano),

@@ -9,15 +9,13 @@ import (
 )
 
 type Agent struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	TokenHash     string         `json:"token_hash"`
-	Labels        string         `json:"labels"`
-	Status        string         `json:"status"`
-	LastSeenAt    sql.NullString `json:"last_seen_at"`
-	CreatedAt     string         `json:"created_at"`
-	RunCommands   sql.NullString `json:"run_commands"`
-	ContainerPort sql.NullInt64  `json:"container_port"`
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	TokenHash  string         `json:"token_hash"`
+	Labels     string         `json:"labels"`
+	Status     string         `json:"status"`
+	LastSeenAt sql.NullString `json:"last_seen_at"`
+	CreatedAt  string         `json:"created_at"`
 }
 
 type Preview struct {
@@ -31,11 +29,12 @@ type Preview struct {
 	ContainerID     sql.NullString `json:"container_id"`
 	AgentHost       sql.NullString `json:"agent_host"`
 	AgentPort       sql.NullInt64  `json:"agent_port"`
-	PublicUrl       sql.NullString `json:"public_url"`
 	Labels          string         `json:"labels"`
 	ErrorMessage    sql.NullString `json:"error_message"`
 	CreatedAt       string         `json:"created_at"`
 	UpdatedAt       string         `json:"updated_at"`
+	RepoCloneUrl    string         `json:"repo_clone_url"`
+	PreviewUrls     string         `json:"preview_urls"`
 }
 
 type PreviewEvent struct {

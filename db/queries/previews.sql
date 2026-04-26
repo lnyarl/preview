@@ -1,13 +1,14 @@
 -- name: UpsertPreview :one
 INSERT INTO previews (
   id, repo_full_name, pr_number, commit_sha, branch,
-  status, labels, created_at, updated_at
+  status, labels, repo_clone_url, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
 ON CONFLICT(repo_full_name, pr_number) DO UPDATE SET
   commit_sha = EXCLUDED.commit_sha,
   branch = EXCLUDED.branch,
   labels = EXCLUDED.labels,
+  repo_clone_url = EXCLUDED.repo_clone_url,
   updated_at = EXCLUDED.updated_at
 RETURNING *;
 
@@ -29,7 +30,7 @@ SET status = ?,
     container_id = COALESCE(?, container_id),
     agent_host = COALESCE(?, agent_host),
     agent_port = COALESCE(?, agent_port),
-    public_url = COALESCE(?, public_url),
+    preview_urls = COALESCE(?, preview_urls),
     error_message = COALESCE(?, error_message),
     assigned_agent_id = COALESCE(?, assigned_agent_id)
 WHERE id = ?;
