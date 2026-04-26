@@ -137,61 +137,6 @@ func (s *AgentStore) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetBuildConfig 는 agentID 의 run 설정을 반환한다 (Phase 4 §4-1).
-// DB NULL → ([]string{}, 0). commands 빈 슬라이스 = "실행 명령 없음", port=0 = "포트 기본값(80)".
-// run_commands 의 raw 텍스트는 \n 으로 split + trim + 빈 줄 제거를 거쳐 []string 으로 변환된다.
-func (s *AgentStore) GetBuildConfig(ctx context.Context, agentID string) ([]string, int, error) {
-	row, err := s.q.GetAgentBuildConfig(ctx, agentID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, 0, store.ErrNotFound
-		}
-		return nil, 0, fmt.Errorf("sqlite.GetBuildConfig: %w", err)
-	}
-	cmds := []string{}
-	if row.RunCommands.Valid {
-		cmds = splitRunCommands(row.RunCommands.String)
-	}
-	port := 0
-	if row.ContainerPort.Valid {
-		port = int(row.ContainerPort.Int64)
-	}
-	return cmds, port, nil
-}
-
-// SaveBuildConfig 는 raw textarea 텍스트와 port 를 저장한다 (Phase 4 §4-1).
-// rawCommands "" → run_commands = NULL (NULLIF 가 처리). port == 0 → container_port = NULL.
-func (s *AgentStore) SaveBuildConfig(ctx context.Context, agentID string, rawCommands string, port int) error {
-	if err := s.q.SaveAgentBuildConfig(ctx, SaveAgentBuildConfigParams{
-		RawCommands: rawCommands,
-		Port:        int64(port),
-		ID:          agentID,
-	}); err != nil {
-		return fmt.Errorf("sqlite.SaveBuildConfig: %w", err)
-	}
-	return nil
-}
-
-// splitRunCommands 는 textarea raw 텍스트를 []string 으로 분해한다.
-// 각 라인 trim + 빈 줄 제거. Phase 4 결정 13. run_commands 컬럼 raw 텍스트가 입력.
-func splitRunCommands(raw string) []string {
-	if raw == "" {
-		return []string{}
-	}
-	// \r\n 정규화 → \n.
-	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
-	parts := strings.Split(normalized, "\n")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		out = append(out, p)
-	}
-	return out
-}
-
 // ResetAllOnline 은 status='online' 레코드를 일괄 offline 으로 리셋한다.
 // Hub 기동 시점에 cmd/hub 가 직접 호출하는 "운영 특수" 경로(결정 11, 리스크 4).
 // 인터페이스 AgentStore 에는 포함하지 않는다.

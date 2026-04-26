@@ -68,18 +68,9 @@ func TestWebhookCreatesPreview(t *testing.T) {
 //
 // 디스패치 모델은 Pull 방식: Agent 의 READY 만이 dispatcher.OnReady 를 트리거한다.
 // 따라서 큐에 작업이 있는 상태에서 Agent 가 처음 READY 를 보내야 매칭이 일어난다.
-// 흐름:
-//
-//	1) saveRunConfig (offline 상태이지만 DB 저장 — WELCOME 직후 AGENT_CONFIG 로 전달)
-//	2) webhook → preview queued
-//	3) Agent 시작 → online + READY → dispatch → building → running
-//
-// `:` 는 sh 의 no-op 빌트인. cwd=worktree 에서 실행되어 즉시 0 종료.
 func TestFullJobFlow(t *testing.T) {
 	h := startHub(t, testSecret, "")
 	tok := h.createAgent(t, "flow-agent")
-	id := h.agentID(t, "flow-agent")
-	h.saveRunConfig(t, id, ":", 80)
 
 	h.sendWebhook(t, "opened", 2, "bbb222", "feat/flow", testRepo)
 	h.pollPreviewStatus(t, 2, testRepo, "queued", 5*time.Second)
@@ -106,8 +97,6 @@ func TestFullJobFlow(t *testing.T) {
 func TestJobTeardown(t *testing.T) {
 	h := startHub(t, testSecret, "")
 	tok := h.createAgent(t, "teardown-agent")
-	id := h.agentID(t, "teardown-agent")
-	h.saveRunConfig(t, id, ":", 80)
 
 	h.sendWebhook(t, "opened", 3, "ccc333", "feat/td", testRepo)
 	h.pollPreviewStatus(t, 3, testRepo, "queued", 5*time.Second)

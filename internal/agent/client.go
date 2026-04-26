@@ -31,7 +31,6 @@ type Client struct {
 	backoff *Backoff
 
 	runner *Runner
-	holder *Holder // Phase 4: AGENT_CONFIG / CONFIG_UPDATE 적용 대상.
 
 	connMu sync.Mutex
 	conn   *websocket.Conn
@@ -45,9 +44,6 @@ func NewClient(cfg Config, logger *slog.Logger) *Client {
 
 // SetRunner 는 JOB_ASSIGN/TEARDOWN 처리 runner 를 주입한다.
 func (c *Client) SetRunner(r *Runner) { c.runner = r }
-
-// SetHolder 는 AGENT_CONFIG / CONFIG_UPDATE 수신 시 Replace 할 Holder 를 주입한다 (Phase 4).
-func (c *Client) SetHolder(h *Holder) { c.holder = h }
 
 // SendStatusUpdate 는 현재 conn 으로 STATUS_UPDATE envelope 를 송신한다.
 // Runner.HubSender 인터페이스 만족.

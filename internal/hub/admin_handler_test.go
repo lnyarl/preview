@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,19 +20,14 @@ import (
 // adminFakeAgentStore 는 AdminHandler 단위 테스트용 in-memory AgentStore.
 type adminFakeAgentStore struct {
 	mu     sync.Mutex
-	rows   map[string]store.Agent     // id → agent
-	byName map[string]string          // name → id
-	// Phase 4: build config storage. agentID → (raw, port).
-	bcRaw  map[string]string
-	bcPort map[string]int
+	rows   map[string]store.Agent // id → agent
+	byName map[string]string      // name → id
 }
 
 func newFakeAgentStore() *adminFakeAgentStore {
 	return &adminFakeAgentStore{
 		rows:   make(map[string]store.Agent),
 		byName: make(map[string]string),
-		bcRaw:  make(map[string]string),
-		bcPort: make(map[string]int),
 	}
 }
 
@@ -101,41 +95,6 @@ func (f *adminFakeAgentStore) Delete(_ context.Context, id string) error {
 	}
 	delete(f.byName, a.Name)
 	delete(f.rows, id)
-	delete(f.bcRaw, id)
-	delete(f.bcPort, id)
-	return nil
-}
-
-// Phase 4 stub: GetBuildConfig / SaveBuildConfig.
-func (f *adminFakeAgentStore) GetBuildConfig(_ context.Context, id string) ([]string, int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.rows[id]; !ok {
-		return nil, 0, store.ErrNotFound
-	}
-	raw := f.bcRaw[id]
-	port := f.bcPort[id]
-	cmds := []string{}
-	if raw != "" {
-		for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			cmds = append(cmds, line)
-		}
-	}
-	return cmds, port, nil
-}
-
-func (f *adminFakeAgentStore) SaveBuildConfig(_ context.Context, id, raw string, port int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, ok := f.rows[id]; !ok {
-		return store.ErrNotFound
-	}
-	f.bcRaw[id] = raw
-	f.bcPort[id] = port
 	return nil
 }
 

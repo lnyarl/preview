@@ -80,12 +80,6 @@ func runStart(args []string) error {
 	runner := agent.NewRunner(docker, cache, c, cfg.AdvertiseHost, logger)
 	c.SetRunner(runner)
 
-	// Phase 4: in-memory 빌드 설정 보관소. 초기 상태는 빈 Config (= 기본값으로 동작).
-	// HELLO 직후 Hub 가 보내는 AGENT_CONFIG 가 첫 Replace 를 수행한다.
-	holder := agent.NewHolder()
-	c.SetHolder(holder)
-	runner.SetHolder(holder)
-
 	// Phase 5: 다중 Job 슬롯 + READY 재전송 의존 주입.
 	runner.SetReadySender(c)
 	runner.SetMaxJobs(cfg.MaxJobs)

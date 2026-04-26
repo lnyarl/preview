@@ -5,7 +5,6 @@ package hub
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,23 +15,18 @@ import (
 	"time"
 
 	"github.com/lnyarl/preview/internal/hub/token"
-	"github.com/lnyarl/preview/internal/protocol"
 	"github.com/lnyarl/preview/internal/store"
 )
 
 // adminUIFakeAgentStore — 최소 구현 (List 만 사용).
 type adminUIFakeAgentStore struct {
-	mu     sync.Mutex
-	items  map[string]*store.Agent
-	bcRaw  map[string]string
-	bcPort map[string]int
+	mu    sync.Mutex
+	items map[string]*store.Agent
 }
 
 func newAdminUIAgentStore() *adminUIFakeAgentStore {
 	return &adminUIFakeAgentStore{
-		items:  map[string]*store.Agent{},
-		bcRaw:  map[string]string{},
-		bcPort: map[string]int{},
+		items: map[string]*store.Agent{},
 	}
 }
 
@@ -84,41 +78,6 @@ func (m *adminUIFakeAgentStore) Delete(_ context.Context, id string) error {
 		return store.ErrNotFound
 	}
 	delete(m.items, id)
-	delete(m.bcRaw, id)
-	delete(m.bcPort, id)
-	return nil
-}
-
-// Phase 4 stub.
-func (m *adminUIFakeAgentStore) GetBuildConfig(_ context.Context, id string) ([]string, int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.items[id]; !ok {
-		return nil, 0, store.ErrNotFound
-	}
-	raw := m.bcRaw[id]
-	port := m.bcPort[id]
-	cmds := []string{}
-	if raw != "" {
-		for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			cmds = append(cmds, line)
-		}
-	}
-	return cmds, port, nil
-}
-
-func (m *adminUIFakeAgentStore) SaveBuildConfig(_ context.Context, id, raw string, port int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.items[id]; !ok {
-		return store.ErrNotFound
-	}
-	m.bcRaw[id] = raw
-	m.bcPort[id] = port
 	return nil
 }
 
@@ -414,22 +373,7 @@ func TestAdminAgentDeleteRedirect(t *testing.T) {
 	}
 }
 
-// fakeAgentConfigSender — admin UI 의 jobSender mock.
-type fakeAgentConfigSender struct {
-	calls   int
-	agentID string
-	cfg     protocol.AgentConfigData
-	err     error
-}
-
-func (f *fakeAgentConfigSender) SendAgentConfig(_ context.Context, agentID string, cfg protocol.AgentConfigData) error {
-	f.calls++
-	f.agentID = agentID
-	f.cfg = cfg
-	return f.err
-}
-
-// TestAdminAgentDetailRenders — F-8 / F-10: agent detail 페이지가 200 OK + 폼 + 환경변수 표.
+// TestAdminAgentDetailRenders — agent detail 페이지가 200 OK + 기본 메타데이터 표시.
 func TestAdminAgentDetailRenders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	as := newAdminUIAgentStore()
@@ -452,26 +396,15 @@ func TestAdminAgentDetailRenders(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"agent-home",
-		`name="run_commands"`,
-		`name="container_port"`,
-		`value="80"`,
-		"docker build -t preview-$PREVIEW_ID:latest .",
-		"$PREVIEW_ID",
-		"$PREVIEW_SHA",
-		"$PREVIEW_BRANCH",
-		"$PORT",
+		"home",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in body", want)
 		}
 	}
-	// $PREVIEW_IMAGE 는 docker 가정 제거와 함께 사라져야 한다.
-	if strings.Contains(body, "$PREVIEW_IMAGE") {
-		t.Errorf("body should not contain $PREVIEW_IMAGE anymore:\n%s", body)
-	}
 }
 
-// TestAdminAgentDetail404 — F-9: 존재하지 않는 agent → 404.
+// TestAdminAgentDetail404 — 존재하지 않는 agent → 404.
 func TestAdminAgentDetail404(t *testing.T) {
 	ui := newAdminUIHandler()
 	req := httptest.NewRequest("GET", "/admin/agents/missing", nil)
@@ -483,217 +416,7 @@ func TestAdminAgentDetail404(t *testing.T) {
 	}
 }
 
-// TestAdminAgentDetailSavedValues — F-11: 저장된 값이 textarea/input 에 표시된다.
-func TestAdminAgentDetailSavedValues(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	as := newAdminUIAgentStore()
-	ps := newAdminUIPreviewStore()
-	tg := token.NewGenerator(4)
-	ui := NewAdminUIHandler(as, ps, tg, logger)
-
-	_ = as.Create(context.Background(), store.Agent{
-		ID: "a1", Name: "ag", Status: "offline", CreatedAt: time.Now().UTC(),
-	})
-	_ = as.SaveBuildConfig(context.Background(), "a1", "npm ci\nnpm run build", 3000)
-
-	req := httptest.NewRequest("GET", "/admin/agents/a1", nil)
-	req.SetPathValue("id", "a1")
-	rr := httptest.NewRecorder()
-	ui.agentDetail(rr, req)
-	body := rr.Body.String()
-	if !strings.Contains(body, "npm ci") || !strings.Contains(body, "npm run build") {
-		t.Errorf("textarea missing saved commands. body:\n%s", body)
-	}
-	if !strings.Contains(body, `value="3000"`) {
-		t.Errorf("port input missing value=3000. body:\n%s", body)
-	}
-}
-
-// TestAdminAgentConfigSaveRedirect — F-12 / F-13 / F-22: 폼 저장 → 303 + DB 갱신.
-// jobSender nil → ?msg=saved_offline.
-func TestAdminAgentConfigSaveRedirect(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	as := newAdminUIAgentStore()
-	ps := newAdminUIPreviewStore()
-	tg := token.NewGenerator(4)
-	ui := NewAdminUIHandler(as, ps, tg, logger)
-
-	_ = as.Create(context.Background(), store.Agent{
-		ID: "a1", Name: "ag", Status: "offline", CreatedAt: time.Now().UTC(),
-	})
-
-	form := strings.NewReader("run_commands=npm+ci%0Anpm+run+build&container_port=3000")
-	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
-	req.SetPathValue("id", "a1")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	ui.agentConfigSave(rr, req)
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("status=%d want 303", rr.Code)
-	}
-	loc := rr.Header().Get("Location")
-	if !strings.HasPrefix(loc, "/admin/agents/a1?") {
-		t.Errorf("Location=%q want prefix /admin/agents/a1?", loc)
-	}
-	// jobSender 미주입 → saved_offline.
-	if !strings.Contains(loc, "saved_offline") {
-		t.Errorf("Location=%q want msg=saved_offline (no jobSender)", loc)
-	}
-
-	// DB 갱신 검증.
-	cmds, port, err := as.GetBuildConfig(context.Background(), "a1")
-	if err != nil {
-		t.Fatalf("GetBuildConfig: %v", err)
-	}
-	if len(cmds) != 2 || cmds[0] != "npm ci" || cmds[1] != "npm run build" {
-		t.Errorf("cmds=%v want [npm ci, npm run build]", cmds)
-	}
-	if port != 3000 {
-		t.Errorf("port=%d want 3000", port)
-	}
-}
-
-// TestAdminAgentConfigSavePushDelivered — F-21: jobSender 가 호출되고 ?msg=saved.
-func TestAdminAgentConfigSavePushDelivered(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	as := newAdminUIAgentStore()
-	ps := newAdminUIPreviewStore()
-	tg := token.NewGenerator(4)
-	ui := NewAdminUIHandler(as, ps, tg, logger)
-	sender := &fakeAgentConfigSender{}
-	ui.SetJobSender(sender)
-
-	_ = as.Create(context.Background(), store.Agent{
-		ID: "a1", Name: "ag", Status: "online", CreatedAt: time.Now().UTC(),
-	})
-
-	form := strings.NewReader("run_commands=echo+hi&container_port=8080")
-	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
-	req.SetPathValue("id", "a1")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	ui.agentConfigSave(rr, req)
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("status=%d want 303", rr.Code)
-	}
-	if sender.calls != 1 {
-		t.Fatalf("jobSender calls=%d want 1", sender.calls)
-	}
-	if sender.agentID != "a1" {
-		t.Errorf("agentID=%q want a1", sender.agentID)
-	}
-	if len(sender.cfg.RunCommands) != 1 || sender.cfg.RunCommands[0] != "echo hi" {
-		t.Errorf("cfg.RunCommands=%v", sender.cfg.RunCommands)
-	}
-	if sender.cfg.ContainerPort != 8080 {
-		t.Errorf("cfg.ContainerPort=%d want 8080", sender.cfg.ContainerPort)
-	}
-	if !strings.Contains(rr.Header().Get("Location"), "msg=saved") {
-		t.Errorf("Location=%q want msg=saved", rr.Header().Get("Location"))
-	}
-}
-
-// TestAdminAgentConfigSavePushOffline — F-22: jobSender 가 not-connected 에러 → ?msg=saved_offline.
-func TestAdminAgentConfigSavePushOffline(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	as := newAdminUIAgentStore()
-	ps := newAdminUIPreviewStore()
-	tg := token.NewGenerator(4)
-	ui := NewAdminUIHandler(as, ps, tg, logger)
-	sender := &fakeAgentConfigSender{err: fmt.Errorf("ws_job_sender: agent a1 not connected")}
-	ui.SetJobSender(sender)
-
-	_ = as.Create(context.Background(), store.Agent{
-		ID: "a1", Name: "ag", Status: "offline", CreatedAt: time.Now().UTC(),
-	})
-	form := strings.NewReader("run_commands=&container_port=")
-	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
-	req.SetPathValue("id", "a1")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	ui.agentConfigSave(rr, req)
-	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "saved_offline") {
-		t.Errorf("Location=%q want saved_offline", loc)
-	}
-}
-
-// TestAdminAgentConfigSavePushFailed — F-23: jobSender 가 일반 에러 → ?msg=saved_push_failed.
-func TestAdminAgentConfigSavePushFailed(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	as := newAdminUIAgentStore()
-	ps := newAdminUIPreviewStore()
-	tg := token.NewGenerator(4)
-	ui := NewAdminUIHandler(as, ps, tg, logger)
-	sender := &fakeAgentConfigSender{err: fmt.Errorf("write tcp boom")}
-	ui.SetJobSender(sender)
-
-	_ = as.Create(context.Background(), store.Agent{
-		ID: "a1", Name: "ag", Status: "online", CreatedAt: time.Now().UTC(),
-	})
-	form := strings.NewReader("run_commands=:&container_port=80")
-	req := httptest.NewRequest("POST", "/admin/agents/a1/config", form)
-	req.SetPathValue("id", "a1")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	ui.agentConfigSave(rr, req)
-	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "saved_push_failed") {
-		t.Errorf("Location=%q want saved_push_failed", loc)
-	}
-}
-
-// TestNormalizeContainerPort — F-15: 1..65535 범위 외/비숫자 → 0.
-func TestNormalizeContainerPort(t *testing.T) {
-	cases := []struct {
-		in   string
-		want int
-	}{
-		{"", 0},
-		{"abc", 0},
-		{"-1", 0},
-		{"0", 0},
-		{"1", 1},
-		{"80", 80},
-		{"65535", 65535},
-		{"65536", 0},
-		{"  3000  ", 3000},
-	}
-	for _, tc := range cases {
-		if got := normalizeContainerPort(tc.in); got != tc.want {
-			t.Errorf("normalizeContainerPort(%q)=%d want %d", tc.in, got, tc.want)
-		}
-	}
-}
-
-// TestSplitAndCleanLines — Phase 4 결정 13.
-func TestSplitAndCleanLines(t *testing.T) {
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{"", []string{}},
-		{"a", []string{"a"}},
-		{"a\nb", []string{"a", "b"}},
-		{"a\n\nb\n", []string{"a", "b"}},
-		{"a\r\nb\r\n", []string{"a", "b"}},
-		{"  a  \n  b  ", []string{"a", "b"}},
-	}
-	for _, tc := range cases {
-		got := splitAndCleanLines(tc.in)
-		if len(got) != len(tc.want) {
-			t.Errorf("splitAndCleanLines(%q) len=%d want %d (got %v)", tc.in, len(got), len(tc.want), got)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("splitAndCleanLines(%q)[%d]=%q want %q", tc.in, i, got[i], tc.want[i])
-			}
-		}
-	}
-}
-
-// TestAdminAgentsListHasDetailLink — F-16: agents 목록 행 Name 이 detail 링크.
+// TestAdminAgentsListHasDetailLink — agents 목록 행 Name 이 detail 링크.
 func TestAdminAgentsListHasDetailLink(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	as := newAdminUIAgentStore()

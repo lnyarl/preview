@@ -22,17 +22,13 @@ import (
 // ---------- in-memory AgentStore for tests ----------
 
 type memStore struct {
-	mu     sync.Mutex
-	items  map[string]*store.Agent
-	bcRaw  map[string]string
-	bcPort map[string]int
+	mu    sync.Mutex
+	items map[string]*store.Agent
 }
 
 func newMemStore() *memStore {
 	return &memStore{
-		items:  map[string]*store.Agent{},
-		bcRaw:  map[string]string{},
-		bcPort: map[string]int{},
+		items: map[string]*store.Agent{},
 	}
 }
 
@@ -95,41 +91,6 @@ func (m *memStore) Delete(_ context.Context, id string) error {
 		return store.ErrNotFound
 	}
 	delete(m.items, id)
-	delete(m.bcRaw, id)
-	delete(m.bcPort, id)
-	return nil
-}
-
-// Phase 4 stub.
-func (m *memStore) GetBuildConfig(_ context.Context, id string) ([]string, int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.items[id]; !ok {
-		return nil, 0, store.ErrNotFound
-	}
-	raw := m.bcRaw[id]
-	port := m.bcPort[id]
-	cmds := []string{}
-	if raw != "" {
-		for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			cmds = append(cmds, line)
-		}
-	}
-	return cmds, port, nil
-}
-
-func (m *memStore) SaveBuildConfig(_ context.Context, id, raw string, port int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.items[id]; !ok {
-		return store.ErrNotFound
-	}
-	m.bcRaw[id] = raw
-	m.bcPort[id] = port
 	return nil
 }
 

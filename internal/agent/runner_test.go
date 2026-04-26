@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -143,19 +144,8 @@ func (d *dockerfileRunner) Output(ctx context.Context, name string, args ...stri
 	return d.base.Output(ctx, name, args...)
 }
 
-// withNoopBuildHolder 는 Holder 를 만들고 ":" (no-op POSIX shell builtin) 1줄을
-// run_commands 로 적용한다. 셸 의존만 있고 외부 도구(docker) 없이도 항상 성공.
-func withNoopBuildHolder(t *testing.T, runner *Runner) *Holder {
-	t.Helper()
-	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{RunCommands: []string{":"}})
-	runner.SetHolder(h)
-	return h
-}
-
 func TestRunnerHappyPath(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, true)
-	withNoopBuildHolder(t, runner)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -168,7 +158,7 @@ func TestRunnerHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	// Phase 4: build 는 셸로 실행되므로 docker.buildCalls = 0. create/start 는 SDK.
+	// Phase 6 rewrite pending: build 단계 없음. create/start 만 호출.
 	if docker.buildCalls != 0 || docker.createCalls != 1 || docker.startCalls != 1 {
 		t.Fatalf("docker calls: build=%d create=%d start=%d", docker.buildCalls, docker.createCalls, docker.startCalls)
 	}
@@ -180,18 +170,16 @@ func TestRunnerHappyPath(t *testing.T) {
 	if docker.lastCreateOpts.Labels["hub-preview-id"] != "p1" {
 		t.Fatalf("missing preview-id label: %v", docker.lastCreateOpts.Labels)
 	}
-	// Phase 4: ContainerPort sentinel 0 → 80 기본값.
+	// Phase 6: 기본 컨테이너 포트 80.
 	if docker.lastCreateOpts.ExposedPort != 80 {
 		t.Fatalf("ExposedPort=%d want 80", docker.lastCreateOpts.ExposedPort)
 	}
 }
 
-// TestRunnerNoDockerfileNotFatal — Phase 4 결정 4: Dockerfile 강제 검사가 제거되었으므로
-// Dockerfile 부재가 더 이상 즉시 실패를 일으키지 않는다. 명시적 비-docker run 명령(":")
-// 으로 성공도 가능.
+// TestRunnerNoDockerfileNotFatal — Phase 6: Dockerfile 부재는 runner 입장에서 관여하지 않는다.
+// ContainerCreate 까지 성공하는 경로를 검증.
 func TestRunnerNoDockerfileNotFatal(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, false)
-	withNoopBuildHolder(t, runner) // ":" 명령은 Dockerfile 없어도 성공.
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -201,7 +189,7 @@ func TestRunnerNoDockerfileNotFatal(t *testing.T) {
 		CommitSHA: "abc",
 	})
 	if err != nil {
-		t.Fatalf("Handle should succeed without Dockerfile when build cmd does not need it: %v", err)
+		t.Fatalf("Handle should succeed: %v", err)
 	}
 	if docker.createCalls != 1 {
 		t.Fatalf("ContainerCreate calls=%d want 1", docker.createCalls)
@@ -214,7 +202,6 @@ func TestRunnerNoDockerfileNotFatal(t *testing.T) {
 
 func TestRunnerTeardown(t *testing.T) {
 	runner, docker, hub, _ := newRunnerSetup(t, true)
-	withNoopBuildHolder(t, runner)
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -242,105 +229,20 @@ func TestRunnerTeardown(t *testing.T) {
 	}
 }
 
-// TestRunnerBuildError — Phase 4: run 명령이 셸에서 non-zero exit 일 때 STATUS_UPDATE failed.
+// TestRunnerBuildError — ContainerCreate 실패 시 STATUS_UPDATE failed 송신.
 func TestRunnerBuildError(t *testing.T) {
-	runner, _, hub, _ := newRunnerSetup(t, true)
-	// "false" 는 항상 exit 1 인 POSIX 명령.
-	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{RunCommands: []string{"false"}})
-	runner.SetHolder(h)
+	runner, docker, hub, _ := newRunnerSetup(t, true)
+	docker.createErr = errors.New("simulated create error")
 	ctx := context.Background()
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err == nil {
-		t.Fatalf("expected error from failing build command")
+		t.Fatalf("expected error from failing container create")
 	}
 	statuses := hub.statuses()
 	if statuses[len(statuses)-1] != "failed" {
 		t.Fatalf("last=%s", statuses[len(statuses)-1])
-	}
-}
-
-// TestRunnerCustomContainerPort — Phase 4: ContainerPort != 0 이면 ExposedPort 에 반영.
-func TestRunnerCustomContainerPort(t *testing.T) {
-	runner, docker, _, _ := newRunnerSetup(t, true)
-	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{RunCommands: []string{":"}, ContainerPort: 3000})
-	runner.SetHolder(h)
-	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if docker.lastCreateOpts.ExposedPort != 3000 {
-		t.Fatalf("ExposedPort=%d want 3000", docker.lastCreateOpts.ExposedPort)
-	}
-}
-
-// TestRunnerMultiLineBuild — Phase 4: 여러 라인이 순서대로 직렬 실행되는지 검증.
-// touch + test (-f) 로 1번째 명령의 부수효과가 2번째 명령에서 보이는지 확인 (cwd=worktree).
-func TestRunnerMultiLineBuild(t *testing.T) {
-	runner, _, hub, _ := newRunnerSetup(t, true)
-	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{
-		RunCommands: []string{
-			"touch step1.marker",
-			"test -f step1.marker",
-		},
-	})
-	runner.SetHolder(h)
-	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	statuses := hub.statuses()
-	if statuses[len(statuses)-1] != "running" {
-		t.Fatalf("last=%s want running", statuses[len(statuses)-1])
-	}
-}
-
-// TestRunnerEnvironmentVariables — Phase 4: PREVIEW_* + PORT env 가 run 명령에서 보인다.
-// $PREVIEW_IMAGE 는 docker 가정을 제거하면서 환경변수에서 빠졌다.
-func TestRunnerEnvironmentVariables(t *testing.T) {
-	runner, _, hub, root := newRunnerSetup(t, true)
-	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{
-		RunCommands: []string{
-			// env 를 파일에 저장 → 검증.
-			"env | grep -E '^(PREVIEW_|PORT=)' > " + filepath.Join(root, "envcap.txt") + " || true",
-		},
-	})
-	runner.SetHolder(h)
-	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{
-		PreviewID: "p1",
-		CommitSHA: "deadbeef",
-		Branch:    "feat/x",
-	}); err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if statuses := hub.statuses(); statuses[len(statuses)-1] != "running" {
-		t.Fatalf("last=%s want running", statuses[len(statuses)-1])
-	}
-	data, err := os.ReadFile(filepath.Join(root, "envcap.txt"))
-	if err != nil {
-		t.Skipf("env capture file missing (env grep may behave differently): %v", err)
-	}
-	captured := string(data)
-	for _, want := range []string{"PREVIEW_ID=p1",
-		"PREVIEW_SHA=deadbeef", "PREVIEW_BRANCH=feat/x", "PORT=80"} {
-		if !strings.Contains(captured, want) {
-			t.Errorf("env capture missing %q. got: %s", want, captured)
-		}
 	}
 }
 
@@ -367,7 +269,6 @@ func TestAllocatePort(t *testing.T) {
 // 가 1 회 송신.
 func TestRunnerHandleDeferTriggersReady(t *testing.T) {
 	runner, _, _, _ := newRunnerSetup(t, true)
-	withNoopBuildHolder(t, runner)
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(1)
@@ -384,12 +285,10 @@ func TestRunnerHandleDeferTriggersReady(t *testing.T) {
 }
 
 // F-7: build 실패 path 에서도 defer 가 maybeSendReady 를 1 회 호출.
-// "false" run command 로 fail() 분기를 강제.
+// docker.createErr 로 fail() 분기를 강제.
 func TestRunnerHandleDeferOnFailureTriggersReady(t *testing.T) {
-	runner, _, _, _ := newRunnerSetup(t, true)
-	h := NewHolder()
-	h.Replace(protocol.AgentConfigData{RunCommands: []string{"false"}})
-	runner.SetHolder(h)
+	runner, docker, _, _ := newRunnerSetup(t, true)
+	docker.createErr = errors.New("docker create fail")
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(2)
@@ -409,7 +308,6 @@ func TestRunnerHandleDeferOnFailureTriggersReady(t *testing.T) {
 // return 하고 defer 미등록 → maybeSendReady 호출 안 됨.
 func TestRunnerHandlePausedRejectsWithoutReady(t *testing.T) {
 	runner, _, hub, _ := newRunnerSetup(t, true)
-	withNoopBuildHolder(t, runner)
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(3)
@@ -437,7 +335,6 @@ func TestRunnerHandlePausedRejectsWithoutReady(t *testing.T) {
 // — Pause 호출이 maybeSendReady 진입보다 먼저인 결정적 시점만 검사.
 func TestRunnerHandleInFlightPauseBlocksReady(t *testing.T) {
 	runner, _, _, _ := newRunnerSetup(t, true)
-	withNoopBuildHolder(t, runner)
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(2)
@@ -445,15 +342,6 @@ func TestRunnerHandleInFlightPauseBlocksReady(t *testing.T) {
 	if err := runner.cache.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	// Handle 안에서 paused=true 가 되도록 — 가장 단순한 결정적 케이스는 Handle 시작
-	// 직전이 아니라, Handle 이 inFlight 를 증가시킨 후 Pause 가 들어온 경우.
-	// 본 테스트는 Pause 를 Handle 호출 직전에 두어 paused 검사 분기를 우회 (그
-	// 분기는 F-8 가 검증함). 여기선 Handle 내부에서 paused 가 set 된 케이스로
-	// 정확히 모사하기 어려우므로, defer 직전 Pause 시뮬: Handle 가 정상 끝난 후
-	// maybeSendReady 가 paused 를 보고 0 회 송신.
-	// 트릭: build 가 끝난 직후 Pause 호출되도록 fakeReadySender.onCall 활용 — 단,
-	// 여기서는 Handle 내부에 hook 없으므로 Pause 후 maybeSendReady 직접 호출로
-	// 동등 검증.
 	runner.inFlight.Add(1)
 	defer func() { runner.inFlight.Add(-1) }()
 	runner.Pause()

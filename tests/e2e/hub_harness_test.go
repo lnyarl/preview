@@ -18,12 +18,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,8 +104,6 @@ func startHub(t *testing.T, webhookSecret, repoURL string) *hubHarness {
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)
 	ws.SetTeardownSender(jobSender)
-	adminUI.SetJobSender(jobSender)
-
 	webhook.SetTeardownSender(jobSender)
 
 	// reconciler 빠른 주기 — stale assigned/orphan 검사가 테스트 흐름을 방해하지 않도록 짧게.
@@ -198,32 +194,6 @@ func (h *hubHarness) agentID(t *testing.T, name string) string {
 	}
 	t.Fatalf("agentID: agent %q not found in %d entries", name, len(list))
 	return ""
-}
-
-// saveRunConfig 는 POST /admin/agents/{id}/config (form) 로 build config 를 저장한다.
-// Hub 는 jobSender 를 통해 즉시 CONFIG_UPDATE 를 푸시한다 (online 인 경우).
-func (h *hubHarness) saveRunConfig(t *testing.T, agentID, rawCmds string, port int) {
-	t.Helper()
-	form := url.Values{}
-	form.Set("run_commands", rawCmds)
-	form.Set("container_port", fmt.Sprintf("%d", port))
-	req, _ := http.NewRequest(http.MethodPost,
-		h.URL+"/admin/agents/"+agentID+"/config",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// SSR 흐름은 303 redirect — redirect 를 따라가지 않도록 클라이언트 구성.
-	client := &http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("saveRunConfig: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("saveRunConfig: status=%d body=%s", resp.StatusCode, string(body))
-	}
 }
 
 // signWebhook 은 GitHub webhook X-Hub-Signature-256 값을 만든다.

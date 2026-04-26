@@ -235,7 +235,7 @@ type agentHarness struct {
 	cancel context.CancelFunc
 }
 
-// startAgent 는 실제 agent.Client + agent.Runner + RepoCache + Holder 를
+// startAgent 는 실제 agent.Client + agent.Runner + RepoCache 를
 // fake docker/cmd runner 와 함께 기동한다. ctx 취소는 t.Cleanup 으로 보장.
 func startAgent(t *testing.T, wsURL, agentToken, repoURL string) *agentHarness {
 	t.Helper()
@@ -255,22 +255,18 @@ func startAgent(t *testing.T, wsURL, agentToken, repoURL string) *agentHarness {
 		Labels:        []string{},
 		AdvertiseHost: "127.0.0.1",
 		LogLevel:      "debug",
-		RepoURL:       repoURL,
 		WorkDir:       t.TempDir(),
 		MaxJobs:       1,
 	}
 
-	cache := agent.NewRepoCache(cfg.WorkDir, cfg.RepoURL, logger)
+	cache := agent.NewRepoCache(cfg.WorkDir, repoURL, logger)
 	cache.SetRunner(fakeCmdRunner{})
 
 	docker := newFakeDockerClient()
-	holder := agent.NewHolder()
 
 	client := agent.NewClient(cfg, logger)
 	runner := agent.NewRunner(docker, cache, client, cfg.AdvertiseHost, logger)
 	client.SetRunner(runner)
-	client.SetHolder(holder)
-	runner.SetHolder(holder)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
