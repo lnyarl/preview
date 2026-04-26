@@ -74,7 +74,7 @@ func TestOrphanRestore(t *testing.T) {
 		},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	r := NewRunner(docker, nil, nil, "127.0.0.1", logger)
+	r := NewRunner(docker, nil, nil, nil, "127.0.0.1", logger)
 
 	ids, err := RestoreOrphans(context.Background(), docker, r, "127.0.0.1", logger)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestOrphanRestore(t *testing.T) {
 func TestOrphanRestoreNoContainers(t *testing.T) {
 	docker := &orphanFakeDocker{listResp: nil}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	r := NewRunner(docker, nil, nil, "127.0.0.1", logger)
+	r := NewRunner(docker, nil, nil, nil, "127.0.0.1", logger)
 
 	ids, err := RestoreOrphans(context.Background(), docker, r, "127.0.0.1", logger)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestOrphanRestoreNoContainers(t *testing.T) {
 
 func TestOrphanRestoreNilDocker(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	r := NewRunner(nil, nil, nil, "127.0.0.1", logger)
+	r := NewRunner(nil, nil, nil, nil, "127.0.0.1", logger)
 	ids, err := RestoreOrphans(context.Background(), nil, r, "127.0.0.1", logger)
 	if err != nil {
 		t.Errorf("RestoreOrphans(nil docker) err=%v want nil", err)

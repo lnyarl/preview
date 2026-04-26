@@ -13,7 +13,17 @@ import (
 	"github.com/lnyarl/preview/internal/protocol"
 )
 
-// fakeDocker 는 DockerClient 의 in-memory mock.
+const testRepoURL = "file:///tmp/preview-fixture"
+
+// previewYml 은 단일 서비스 .preview.yml 내용.
+const previewYml = `services:
+  app:
+    port: 3000
+    path: /app
+`
+
+// ---------- fakeDocker (unchanged interface, reused) ----------
+
 type fakeDocker struct {
 	mu             sync.Mutex
 	buildCalls     int
@@ -82,7 +92,34 @@ func (f *fakeDocker) NetworkCreate(ctx context.Context, name string, opts Networ
 	return nil
 }
 
-// runnerFakeHub 는 HubSender 의 capture mock.
+// ---------- fakeCmd — docker compose 명령 캡처 ----------
+
+type fakeCmd struct {
+	mu    sync.Mutex
+	calls [][]string
+	err   error
+}
+
+func (f *fakeCmd) Run(ctx context.Context, name string, args ...string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, append([]string{name}, args...))
+	return f.err
+}
+func (f *fakeCmd) Output(ctx context.Context, name string, args ...string) (string, error) {
+	return "", nil
+}
+func (f *fakeCmd) lastArgs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) == 0 {
+		return nil
+	}
+	return f.calls[len(f.calls)-1]
+}
+
+// ---------- runnerFakeHub — HubSender mock ----------
+
 type runnerFakeHub struct {
 	mu      sync.Mutex
 	updates []protocol.StatusUpdateData
@@ -103,96 +140,153 @@ func (h *runnerFakeHub) statuses() []string {
 	}
 	return out
 }
-
-func newRunnerSetup(t *testing.T, withDockerfile bool) (*Runner, *fakeDocker, *runnerFakeHub, string) {
-	t.Helper()
-	root := t.TempDir()
-	cache := NewRepoCache(root, "file:///tmp/preview-fixture", nil)
-	r := &fakeRunner{revParseOK: true}
-	cache.SetRunner(r)
-	docker := &fakeDocker{}
-	hub := &runnerFakeHub{}
-
-	// trackerRunner: worktree add 시 Dockerfile 까지 만든다.
-	if withDockerfile {
-		cache.SetRunner(&dockerfileRunner{base: r})
+func (h *runnerFakeHub) lastUpdate() protocol.StatusUpdateData {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.updates) == 0 {
+		return protocol.StatusUpdateData{}
 	}
-	runner := NewRunner(docker, cache, hub, "127.0.0.1", nil)
-	return runner, docker, hub, root
+	return h.updates[len(h.updates)-1]
 }
 
-// dockerfileRunner 는 worktree add 시 Dockerfile 도 함께 만든다.
-type dockerfileRunner struct{ base *fakeRunner }
+// ---------- worktreeFileRunner — worktree add 시 파일 생성 ----------
 
-func (d *dockerfileRunner) Run(ctx context.Context, name string, args ...string) error {
-	if err := d.base.Run(ctx, name, args...); err != nil {
+// worktreeFileRunner 는 worktree add 시 .preview.yml + build 파일을 생성한다.
+// mode: "dockerfile" | "compose" | "no_build" | "no_config".
+type worktreeFileRunner struct {
+	base *fakeRunner
+	mode string
+}
+
+func (w *worktreeFileRunner) Run(ctx context.Context, name string, args ...string) error {
+	if err := w.base.Run(ctx, name, args...); err != nil {
 		return err
 	}
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "worktree add") {
+		var path string
 		for i, a := range args {
 			if a == "add" && i+2 < len(args) {
-				path := args[i+2]
-				_ = os.WriteFile(filepath.Join(path, "Dockerfile"), []byte("FROM nginx:alpine\n"), 0o644)
-				return nil
+				path = args[i+2]
+				break
 			}
+		}
+		if path == "" {
+			return nil
+		}
+		if w.mode != "no_config" {
+			_ = os.WriteFile(filepath.Join(path, ".preview.yml"), []byte(previewYml), 0o644)
+		}
+		switch w.mode {
+		case "dockerfile":
+			_ = os.WriteFile(filepath.Join(path, "Dockerfile"), []byte("FROM nginx:alpine\n"), 0o644)
+		case "compose":
+			_ = os.WriteFile(filepath.Join(path, "docker-compose.yml"),
+				[]byte("version: '3'\nservices:\n  app:\n    image: nginx:alpine\n"), 0o644)
+		// "no_build": .preview.yml only, no build artifact
 		}
 	}
 	return nil
 }
-func (d *dockerfileRunner) Output(ctx context.Context, name string, args ...string) (string, error) {
-	return d.base.Output(ctx, name, args...)
+func (w *worktreeFileRunner) Output(ctx context.Context, name string, args ...string) (string, error) {
+	return w.base.Output(ctx, name, args...)
 }
 
-func TestRunnerHappyPath(t *testing.T) {
-	runner, docker, hub, _ := newRunnerSetup(t, true)
+// ---------- 테스트 setup ----------
+
+// newRunnerSetup 은 mode 에 따라 Runner 를 세팅한다.
+// mode: "dockerfile" | "compose" | "no_build" | "no_config".
+func newRunnerSetup(t *testing.T, mode string) (*Runner, *fakeDocker, *fakeCmd, *runnerFakeHub) {
+	t.Helper()
+	root := t.TempDir()
+	multiCache := NewMultiRepoCache(root, nil)
+
+	// MultiRepoCache 에 fake runner 를 주입한 RepoCache 미리 등록.
+	rc := NewRepoCache(root, testRepoURL, nil)
+	base := &fakeRunner{revParseOK: true}
+	rc.SetRunner(&worktreeFileRunner{base: base, mode: mode})
+	multiCache.mu.Lock()
+	multiCache.repos[testRepoURL] = rc
+	multiCache.mu.Unlock()
+
+	docker := &fakeDocker{}
+	hub := &runnerFakeHub{}
+	cmd := &fakeCmd{}
+	runner := NewRunner(docker, multiCache, cmd, hub, "127.0.0.1", nil)
+	return runner, docker, cmd, hub
+}
+
+func testMsg(pid string) protocol.JobAssignData {
+	return protocol.JobAssignData{PreviewID: pid, RepoURL: testRepoURL, CommitSHA: "abc"}
+}
+
+// ---------- Tests ----------
+
+func TestRunnerHappyPathDockerfile(t *testing.T) {
+	runner, docker, _, hub := newRunnerSetup(t, "dockerfile")
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	err := runner.Handle(ctx, protocol.JobAssignData{
-		PreviewID: "p1",
-		RepoURL:   "file:///tmp/x",
-		CommitSHA: "abc",
-	})
-	if err != nil {
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	// Phase 6 rewrite pending: build 단계 없음. create/start 만 호출.
-	if docker.buildCalls != 0 || docker.createCalls != 1 || docker.startCalls != 1 {
+	// Dockerfile 모드: ImageBuild + ContainerCreate + ContainerStart.
+	if docker.buildCalls != 1 || docker.createCalls != 1 || docker.startCalls != 1 {
 		t.Fatalf("docker calls: build=%d create=%d start=%d", docker.buildCalls, docker.createCalls, docker.startCalls)
 	}
 	statuses := hub.statuses()
 	if len(statuses) < 2 || statuses[0] != "building" || statuses[len(statuses)-1] != "running" {
 		t.Fatalf("statuses=%v", statuses)
 	}
-	// label 검증 (NF-Container-Label-1).
-	if docker.lastCreateOpts.Labels["hub-preview-id"] != "p1" {
-		t.Fatalf("missing preview-id label: %v", docker.lastCreateOpts.Labels)
+	// preview_urls 확인.
+	last := hub.lastUpdate()
+	if len(last.PreviewURLs) == 0 {
+		t.Errorf("preview_urls empty; want at least one entry")
 	}
-	// Phase 6: 기본 컨테이너 포트 80.
-	if docker.lastCreateOpts.ExposedPort != 80 {
-		t.Fatalf("ExposedPort=%d want 80", docker.lastCreateOpts.ExposedPort)
+	if _, ok := last.PreviewURLs["app"]; !ok {
+		t.Errorf("preview_urls missing 'app' key: %v", last.PreviewURLs)
+	}
+	// hub-preview-id 라벨 확인.
+	if docker.lastCreateOpts.Labels["hub-preview-id"] != "p1" {
+		t.Errorf("missing hub-preview-id label: %v", docker.lastCreateOpts.Labels)
+	}
+	// Networks: [preview-net].
+	if len(docker.lastCreateOpts.Networks) == 0 || docker.lastCreateOpts.Networks[0] != traefikNetwork {
+		t.Errorf("Networks=%v want [%s]", docker.lastCreateOpts.Networks, traefikNetwork)
 	}
 }
 
-// TestRunnerNoDockerfileNotFatal — Phase 6: Dockerfile 부재는 runner 입장에서 관여하지 않는다.
-// ContainerCreate 까지 성공하는 경로를 검증.
-func TestRunnerNoDockerfileNotFatal(t *testing.T) {
-	runner, docker, hub, _ := newRunnerSetup(t, false)
+func TestRunnerHappyPathCompose(t *testing.T) {
+	runner, docker, cmd, hub := newRunnerSetup(t, "compose")
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
+		t.Fatalf("Handle: %v", err)
 	}
-	err := runner.Handle(ctx, protocol.JobAssignData{
-		PreviewID: "p1",
-		CommitSHA: "abc",
-	})
-	if err != nil {
-		t.Fatalf("Handle should succeed: %v", err)
+	// compose 모드: ImageBuild / ContainerCreate/Start 없음.
+	if docker.buildCalls != 0 || docker.createCalls != 0 {
+		t.Fatalf("unexpected docker calls: build=%d create=%d", docker.buildCalls, docker.createCalls)
 	}
-	if docker.createCalls != 1 {
-		t.Fatalf("ContainerCreate calls=%d want 1", docker.createCalls)
+	// docker compose up -d が呼ばれたか.
+	last := cmd.lastArgs()
+	if len(last) == 0 {
+		t.Fatal("docker compose not called")
+	}
+	if last[0] != "docker" || last[1] != "compose" {
+		t.Errorf("cmd args=%v want docker compose ...", last)
+	}
+	found := false
+	for _, a := range last {
+		if a == "up" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("compose up not in args: %v", last)
+	}
+	// preview_urls 확인.
+	last2 := hub.lastUpdate()
+	if len(last2.PreviewURLs) == 0 {
+		t.Errorf("preview_urls empty for compose mode")
 	}
 	statuses := hub.statuses()
 	if statuses[len(statuses)-1] != "running" {
@@ -200,13 +294,37 @@ func TestRunnerNoDockerfileNotFatal(t *testing.T) {
 	}
 }
 
-func TestRunnerTeardown(t *testing.T) {
-	runner, docker, hub, _ := newRunnerSetup(t, true)
+func TestRunnerPreviewConfigMissing(t *testing.T) {
+	runner, _, _, hub := newRunnerSetup(t, "no_config")
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
+
+	if err := runner.Handle(ctx, testMsg("p1")); err == nil {
+		t.Fatal("expected error from missing .preview.yml")
 	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+	statuses := hub.statuses()
+	if statuses[len(statuses)-1] != "failed" {
+		t.Fatalf("last status=%s want failed", statuses[len(statuses)-1])
+	}
+}
+
+func TestRunnerNoBuildArtifact(t *testing.T) {
+	runner, _, _, hub := newRunnerSetup(t, "no_build")
+	ctx := context.Background()
+
+	if err := runner.Handle(ctx, testMsg("p1")); err == nil {
+		t.Fatal("expected error: no build artifact")
+	}
+	statuses := hub.statuses()
+	if statuses[len(statuses)-1] != "failed" {
+		t.Fatalf("last status=%s want failed", statuses[len(statuses)-1])
+	}
+}
+
+func TestRunnerTeardownDockerfile(t *testing.T) {
+	runner, docker, _, hub := newRunnerSetup(t, "dockerfile")
+	ctx := context.Background()
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	hub.mu.Lock()
@@ -223,26 +341,85 @@ func TestRunnerTeardown(t *testing.T) {
 	if len(statuses) != 1 || statuses[0] != "done" {
 		t.Fatalf("statuses=%v want [done]", statuses)
 	}
-	// jobs 맵에서 제거.
 	if _, ok := runner.jobs.Load("p1"); ok {
-		t.Fatalf("jobs entry not deleted")
+		t.Fatal("jobs entry not deleted after teardown")
 	}
 }
 
-// TestRunnerBuildError — ContainerCreate 실패 시 STATUS_UPDATE failed 송신.
-func TestRunnerBuildError(t *testing.T) {
-	runner, docker, hub, _ := newRunnerSetup(t, true)
-	docker.createErr = errors.New("simulated create error")
+func TestRunnerTeardownCompose(t *testing.T) {
+	runner, _, cmd, hub := newRunnerSetup(t, "compose")
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
+		t.Fatalf("Handle: %v", err)
 	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err == nil {
-		t.Fatalf("expected error from failing container create")
+	cmd.mu.Lock()
+	cmd.calls = nil
+	cmd.mu.Unlock()
+	hub.mu.Lock()
+	hub.updates = nil
+	hub.mu.Unlock()
+
+	if err := runner.Teardown(ctx, "p1"); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+	last := cmd.lastArgs()
+	if len(last) == 0 {
+		t.Fatal("docker compose down not called")
+	}
+	found := false
+	for _, a := range last {
+		if a == "down" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("compose down not in args: %v", last)
+	}
+	statuses := hub.statuses()
+	if len(statuses) != 1 || statuses[0] != "done" {
+		t.Fatalf("statuses=%v want [done]", statuses)
+	}
+}
+
+func TestRunnerBuildError(t *testing.T) {
+	runner, docker, _, hub := newRunnerSetup(t, "dockerfile")
+	docker.buildErr = errors.New("simulated build error")
+	ctx := context.Background()
+
+	if err := runner.Handle(ctx, testMsg("p1")); err == nil {
+		t.Fatal("expected error from failing ImageBuild")
 	}
 	statuses := hub.statuses()
 	if statuses[len(statuses)-1] != "failed" {
-		t.Fatalf("last=%s", statuses[len(statuses)-1])
+		t.Fatalf("last=%s want failed", statuses[len(statuses)-1])
+	}
+}
+
+func TestRunnerContainerCreateError(t *testing.T) {
+	runner, docker, _, hub := newRunnerSetup(t, "dockerfile")
+	docker.createErr = errors.New("simulated create error")
+	ctx := context.Background()
+
+	if err := runner.Handle(ctx, testMsg("p1")); err == nil {
+		t.Fatal("expected error from failing ContainerCreate")
+	}
+	statuses := hub.statuses()
+	if statuses[len(statuses)-1] != "failed" {
+		t.Fatalf("last=%s want failed", statuses[len(statuses)-1])
+	}
+}
+
+func TestRunnerRepoURLMissing(t *testing.T) {
+	runner, _, _, hub := newRunnerSetup(t, "dockerfile")
+	ctx := context.Background()
+
+	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", RepoURL: "", CommitSHA: "abc"}); err == nil {
+		t.Fatal("expected error for empty RepoURL")
+	}
+	statuses := hub.statuses()
+	if statuses[len(statuses)-1] != "failed" {
+		t.Fatalf("last=%s want failed", statuses[len(statuses)-1])
 	}
 }
 
@@ -254,7 +431,6 @@ func TestAllocatePort(t *testing.T) {
 	if port <= 0 || port > 65535 {
 		t.Fatalf("port=%d out of range", port)
 	}
-	// 동일 호출 두 번이 모두 OK 인지 확인 (재시도 로직 동작 확인은 fake listener 가 필요).
 	port2, err := allocatePort(2)
 	if err != nil {
 		t.Fatalf("allocatePort 2: %v", err)
@@ -264,19 +440,15 @@ func TestAllocatePort(t *testing.T) {
 	}
 }
 
-// F-6 (Phase 5): 단일 Handle 성공 path 후 ReadySender 가 1 회 호출된다.
-// MaxJobs=1 이고 inFlight 가 defer 안에서 1→0 으로 감소한 직후 maybeSendReady
-// 가 1 회 송신.
+// TestRunnerHandleDeferTriggersReady — Handle 성공 후 ReadySender 1회 호출.
 func TestRunnerHandleDeferTriggersReady(t *testing.T) {
-	runner, _, _, _ := newRunnerSetup(t, true)
+	runner, _, _, _ := newRunnerSetup(t, "dockerfile")
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(1)
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if got := fake.count(); got != 1 {
@@ -284,64 +456,50 @@ func TestRunnerHandleDeferTriggersReady(t *testing.T) {
 	}
 }
 
-// F-7: build 실패 path 에서도 defer 가 maybeSendReady 를 1 회 호출.
-// docker.createErr 로 fail() 분기를 강제.
+// TestRunnerHandleDeferOnFailureTriggersReady — 실패 path 에서도 defer 가 maybeSendReady 호출.
 func TestRunnerHandleDeferOnFailureTriggersReady(t *testing.T) {
-	runner, docker, _, _ := newRunnerSetup(t, true)
+	runner, docker, _, _ := newRunnerSetup(t, "dockerfile")
 	docker.createErr = errors.New("docker create fail")
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(2)
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	// Handle 가 fail 을 리턴해도 defer 는 실행되어야 한다.
-	_ = runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"})
-	// inFlight 0 + maxJobs 2 → 2 회 송신.
+
+	_ = runner.Handle(ctx, testMsg("p1"))
 	if got := fake.count(); got != 2 {
 		t.Fatalf("ReadySender calls=%d want 2", got)
 	}
 }
 
-// F-8 (결정 4): paused=true 일 때 Handle 즉시 거절 분기는 inFlight 증가 없이
-// return 하고 defer 미등록 → maybeSendReady 호출 안 됨.
+// TestRunnerHandlePausedRejectsWithoutReady — paused=true 시 Handle 즉시 거절.
 func TestRunnerHandlePausedRejectsWithoutReady(t *testing.T) {
-	runner, _, hub, _ := newRunnerSetup(t, true)
+	runner, _, _, hub := newRunnerSetup(t, "dockerfile")
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(3)
-	runner.Pause() // paused=true.
+	runner.Pause()
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	if err := runner.Handle(ctx, protocol.JobAssignData{PreviewID: "p1", CommitSHA: "abc"}); err != nil {
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	// paused 거절 분기는 inFlight 미증가 + defer 미등록 → READY 송신 0.
 	if got := fake.count(); got != 0 {
-		t.Fatalf("ReadySender calls=%d want 0 (paused rejection)", got)
+		t.Fatalf("ReadySender calls=%d want 0 (paused)", got)
 	}
-	// 거절 시 failed STATUS_UPDATE 만 남아 있어야 한다 (Phase 3 결정 11 흐름 유지).
 	statuses := hub.statuses()
 	if len(statuses) != 1 || statuses[0] != "failed" {
 		t.Fatalf("statuses=%v want [failed]", statuses)
 	}
 }
 
-// F-9 (결정적 케이스): Handle 진행 중 Pause() 가 호출되면, defer 의
-// maybeSendReady 가 paused 검사로 송신을 차단한다.
-// — Pause 호출이 maybeSendReady 진입보다 먼저인 결정적 시점만 검사.
+// TestRunnerHandleInFlightPauseBlocksReady — Handle 진행 중 Pause 호출 시 maybeSendReady 차단.
 func TestRunnerHandleInFlightPauseBlocksReady(t *testing.T) {
-	runner, _, _, _ := newRunnerSetup(t, true)
+	runner, _, _, _ := newRunnerSetup(t, "dockerfile")
 	fake := &fakeReadySender{}
 	runner.SetReadySender(fake)
 	runner.SetMaxJobs(2)
 	ctx := context.Background()
-	if err := runner.cache.Ensure(ctx); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
+
 	runner.inFlight.Add(1)
 	defer func() { runner.inFlight.Add(-1) }()
 	runner.Pause()

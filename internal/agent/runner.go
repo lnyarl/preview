@@ -1,12 +1,13 @@
 // 이 파일의 책임:
-//   - JOB_ASSIGN 수신 시 building → docker run → STATUS_UPDATE running 송신.
-//   - JOB_TEARDOWN 수신 시 컨테이너 stop+rm → worktree remove → STATUS_UPDATE done 송신.
-//   - 동적 포트 할당 (net.Listen ":0") + 1회 재시도 (결정 8, F-S2-14).
-//   - jobs map: previewID → 메모리 상태 (containerID, port, worktree). 재시작 복원은 Step 3 이월.
-//   - Phase 6: Holder/run_commands 제거 (결정 13). 빌드 설정은 .preview.yml 에서 읽음 (runner rewrite pending).
+//   - JOB_ASSIGN: MultiRepoCache.Ensure+Checkout → .preview.yml 로드 →
+//     compose / Dockerfile 분기 빌드 → STATUS_UPDATE running (preview_urls 포함).
+//   - JOB_TEARDOWN: buildMode 에 따라 compose down / docker stop+rm →
+//     worktree remove → STATUS_UPDATE done.
+//   - Phase 6: Holder/run_commands 제거 (결정 13). MultiRepoCache (결정 8).
+//     Traefik path-prefix 라우팅 (결정 10/11). preview_urls 계산 (결정 11/14).
 //   - Phase 5: Handle 의 defer 가 슬롯 회복 후 maybeSendReady (ready.go) 를 호출.
 //
-// fake DockerClient 로 단위 테스트 주입 (NF-Test-Docker-1). 참고: phase-2 §5-1 결정 6/8, phase-5 §3 결정 1/3/4/10.
+// 참고: phase-6 §4-4, 결정 3/5/8/9/10/11/13/14.
 package agent
 
 import (
@@ -15,10 +16,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"github.com/lnyarl/preview/internal/protocol"
+)
+
+const (
+	buildModeCompose    = "compose"
+	buildModeDockerfile = "dockerfile"
 )
 
 // HubSender 는 Agent → Hub 메시지 송신 인터페이스.
@@ -30,21 +38,26 @@ type HubSender interface {
 // runningJob 은 jobs 맵의 엔트리.
 type runningJob struct {
 	previewID    string
-	containerID  string
+	containerID  string // Dockerfile 모드 전용. compose 모드에서는 비어있음.
 	host         string
-	port         int
+	port         int    // Traefik 호스트 포트 (preview 접근 진입점).
 	worktreePath string
+	repoURL      string
+	buildMode    string // buildModeCompose 또는 buildModeDockerfile.
+	composeFile  string // compose 모드에서 사용한 compose 파일 절대경로.
 }
 
 // Runner 는 JOB_ASSIGN/TEARDOWN 처리 로직.
 type Runner struct {
-	docker  DockerClient
-	cache   *RepoCache
-	hub     HubSender
-	advHost string
-	logger  *slog.Logger
-	ready   ReadySender // Phase 5: READY 송신 의존 (nil 허용 = no-op).
-	maxJobs int         // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
+	docker      DockerClient
+	cache       *MultiRepoCache
+	cmd         CmdRunner  // docker compose 명령 실행용 (Phase 6).
+	hub         HubSender
+	advHost     string
+	traefikPort int        // Traefik 호스트 포트 (Phase 6, default 8080).
+	logger      *slog.Logger
+	ready       ReadySender // Phase 5: READY 송신 의존 (nil 허용 = no-op).
+	maxJobs     int         // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
 
 	jobs     sync.Map    // previewID -> *runningJob
 	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
@@ -52,14 +65,20 @@ type Runner struct {
 }
 
 // Pause 는 graceful shutdown 시 신규 JOB_ASSIGN 을 거절하도록 표시한다.
-// 진행 중 build 는 끝까지 진행 (결정 11).
 func (r *Runner) Pause() { r.paused.Store(true) }
 
 // Paused 는 현재 paused 여부를 반환한다.
 func (r *Runner) Paused() bool { return r.paused.Load() }
 
-// InFlight 는 현재 진행 중인 build/run 갯수를 반환한다 (drain polling 용).
+// InFlight 는 현재 진행 중인 build/run 갯수를 반환한다.
 func (r *Runner) InFlight() int { return int(r.inFlight.Load()) }
+
+// SetTraefikPort 는 Traefik 호스트 포트를 설정한다 (Phase 6, default 8080).
+func (r *Runner) SetTraefikPort(port int) {
+	if port > 0 {
+		r.traefikPort = port
+	}
+}
 
 // RunningPreviewIDs 는 jobs 맵에 있는 previewID 슬라이스 (HELLO.RunningPreviews 채움용).
 func (r *Runner) RunningPreviewIDs() []string {
@@ -73,40 +92,42 @@ func (r *Runner) RunningPreviewIDs() []string {
 	return out
 }
 
-// RegisterRestoredJob 는 orphan_restore.go 가 docker.ContainerList 결과로 발견한
-// 컨테이너를 jobs 맵에 등록한다 (HELLO 직전 호출).
+// RegisterRestoredJob 는 orphan_restore.go 가 발견한 컨테이너를 jobs 맵에 등록한다.
+// Phase 6: Dockerfile 모드 컨테이너(hub-preview-id 라벨 보유)만 복원 가능.
 func (r *Runner) RegisterRestoredJob(previewID, containerID, host string, port int) {
 	r.jobs.Store(previewID, &runningJob{
 		previewID:   previewID,
 		containerID: containerID,
 		host:        host,
 		port:        port,
+		buildMode:   buildModeDockerfile,
 	})
 }
 
-// NewRunner 는 Runner 를 조립한다.
-func NewRunner(docker DockerClient, cache *RepoCache, hub HubSender, advHost string, logger *slog.Logger) *Runner {
+// NewRunner 는 Runner 를 조립한다. cmd 가 nil 이면 execRunner{} 를 사용한다.
+func NewRunner(docker DockerClient, cache *MultiRepoCache, cmd CmdRunner, hub HubSender, advHost string, logger *slog.Logger) *Runner {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(silentWriter{}, nil))
 	}
 	if advHost == "" {
 		advHost = "127.0.0.1"
 	}
+	if cmd == nil {
+		cmd = execRunner{}
+	}
 	return &Runner{
-		docker:  docker,
-		cache:   cache,
-		hub:     hub,
-		advHost: advHost,
-		logger:  logger,
-		maxJobs: 1, // Phase 5: SetMaxJobs 미호출 시 1 슬롯 동작 보장.
+		docker:      docker,
+		cache:       cache,
+		cmd:         cmd,
+		hub:         hub,
+		advHost:     advHost,
+		traefikPort: 8080,
+		logger:      logger,
+		maxJobs:     1,
 	}
 }
 
 // Handle 은 JOB_ASSIGN 1건을 처리한다. 실패 시 STATUS_UPDATE failed 송신.
-// 호출자는 보통 별도 goroutine 으로 호출.
-//
-// Phase 3: Pause() 호출 후 진입한 호출은 즉시 STATUS_UPDATE(failed,
-// "agent shutting down") 송신 후 무시 (결정 11 / §5-13).
 func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	pid := msg.PreviewID
 	if r.paused.Load() {
@@ -121,7 +142,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return nil
 	}
 	r.inFlight.Add(1)
-	defer func() { r.inFlight.Add(-1); r.maybeSendReady(ctx) }() // Phase 5: 슬롯 회복 + 다음 READY.
+	defer func() { r.inFlight.Add(-1); r.maybeSendReady(ctx) }()
 	r.logger.Info("agent_job_assign", "preview_id", pid, "repo_url", msg.RepoURL, "sha", msg.CommitSHA)
 
 	// (1) building 송신.
@@ -132,85 +153,187 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		r.logger.Warn("status_update_building_failed", "preview_id", pid, "err", err.Error())
 	}
 
+	if msg.RepoURL == "" {
+		return r.fail(ctx, pid, "repo_url_missing", errors.New("JobAssignData.RepoURL is empty"))
+	}
+
 	// (2) repo Ensure + Checkout.
-	if err := r.cache.Ensure(ctx); err != nil {
+	if err := r.cache.Ensure(ctx, msg.RepoURL); err != nil {
 		return r.fail(ctx, pid, "repocache_ensure", err)
 	}
-	worktree, err := r.cache.Checkout(ctx, pid, msg.CommitSHA)
+	worktree, err := r.cache.Checkout(ctx, msg.RepoURL, pid, msg.CommitSHA)
 	if err != nil {
 		return r.fail(ctx, pid, "repocache_checkout", err)
 	}
 
-	// (3) Phase 6: .preview.yml 기반 빌드 설정 로드 예정 (runner rewrite pending).
-	// 현재는 기본 컨테이너 포트 80 고정.
-	resolvedPort := 80
-	tag := "preview-" + pid + ":latest"
-
-	// (4) 동적 포트 할당.
-	hostPort, err := allocatePort(2)
+	// (3) .preview.yml 로드.
+	cfg, err := LoadPreviewConfig(worktree)
 	if err != nil {
-		return r.fail(ctx, pid, "allocate_port", err)
+		if errors.Is(err, ErrPreviewConfigMissing) {
+			return r.fail(ctx, pid, "preview_config_missing", err)
+		}
+		return r.fail(ctx, pid, "preview_config_invalid", err)
 	}
 
-	// (6) 컨테이너 생성/시작 (결정 6: SDK 그대로 유지).
-	cid, err := r.docker.ContainerCreate(ctx, CreateOptions{
-		Image:       tag,
-		Labels:      map[string]string{"hub-preview-id": pid},
-		HostPort:    hostPort,
-		ExposedPort: resolvedPort,
-	})
+	// (4) 빌드 파일 감지 + 분기.
+	composefile, _, mode, detectErr := r.detectBuildFiles(worktree, cfg)
+	if detectErr != nil {
+		return r.fail(ctx, pid, "no_build_artifact", detectErr)
+	}
+
+	var containerID string
+	switch mode {
+	case buildModeCompose:
+		containerID, err = r.handleCompose(ctx, pid, worktree, composefile, cfg)
+	default:
+		containerID, err = r.handleDockerfile(ctx, pid, worktree, cfg)
+	}
 	if err != nil {
-		return r.fail(ctx, pid, "container_create", err)
-	}
-	if err := r.docker.ContainerStart(ctx, cid); err != nil {
-		_ = r.docker.ContainerRemove(ctx, cid, RemoveOptions{Force: true})
-		return r.fail(ctx, pid, "container_start", err)
+		return err
 	}
 
-	// (7) jobs 맵 등록.
+	// (5) preview URLs.
+	urls := PreviewURLs(pid, cfg, r.advHost, r.traefikPort)
+
+	// (6) jobs 맵 등록.
 	r.jobs.Store(pid, &runningJob{
 		previewID:    pid,
-		containerID:  cid,
+		containerID:  containerID,
 		host:         r.advHost,
-		port:         hostPort,
+		port:         r.traefikPort,
 		worktreePath: worktree,
+		repoURL:      msg.RepoURL,
+		buildMode:    mode,
+		composeFile:  composefile,
 	})
 
-	// (8) running STATUS_UPDATE.
+	// (7) running STATUS_UPDATE.
 	host := r.advHost
-	port := hostPort
+	port := r.traefikPort
+	var cidPtr *string
+	if containerID != "" {
+		cidPtr = &containerID
+	}
 	if err := r.hub.SendStatusUpdate(ctx, protocol.StatusUpdateData{
 		PreviewID:   pid,
 		Status:      "running",
-		ContainerID: &cid,
+		ContainerID: cidPtr,
 		AgentHost:   &host,
 		AgentPort:   &port,
+		PreviewURLs: urls,
 	}); err != nil {
 		r.logger.Warn("status_update_running_failed", "preview_id", pid, "err", err.Error())
 	}
 	return nil
 }
 
+// handleCompose 는 compose 모드: override 파일 생성 + docker compose up -d.
+func (r *Runner) handleCompose(ctx context.Context, pid, worktree, composefile string, cfg PreviewConfig) (string, error) {
+	overrideData, err := ComposeOverrideYAML(pid, cfg)
+	if err != nil {
+		return "", r.fail(ctx, pid, "compose_override_yaml", err)
+	}
+	overridePath := filepath.Join(worktree, ".preview-override-"+pid+".yml")
+	if err := os.WriteFile(overridePath, overrideData, 0o644); err != nil {
+		return "", r.fail(ctx, pid, "compose_override_write", err)
+	}
+	projectName := "preview-" + pid
+	if err := r.cmd.Run(ctx, "docker", "compose",
+		"-f", composefile,
+		"-f", overridePath,
+		"--project-name", projectName,
+		"up", "-d",
+	); err != nil {
+		return "", r.fail(ctx, pid, "compose_up", err)
+	}
+	return "", nil
+}
+
+// handleDockerfile 는 Dockerfile 모드: docker build + ContainerCreate/Start.
+func (r *Runner) handleDockerfile(ctx context.Context, pid, worktree string, cfg PreviewConfig) (string, error) {
+	tag := "preview-" + pid + ":latest"
+	if _, err := r.docker.ImageBuild(ctx, worktree, BuildOptions{Tag: tag}); err != nil {
+		return "", r.fail(ctx, pid, "image_build", err)
+	}
+	svcName, svc, ok := cfg.FirstService()
+	if !ok {
+		return "", r.fail(ctx, pid, "no_service", errors.New("no service defined in .preview.yml"))
+	}
+	labels := ServiceLabels(pid, svcName, svc)
+	labels["hub-preview-id"] = pid
+
+	cid, err := r.docker.ContainerCreate(ctx, CreateOptions{
+		Image:       tag,
+		Name:        "preview-" + pid,
+		Labels:      labels,
+		Networks:    []string{traefikNetwork},
+		ExposedPort: svc.Port,
+	})
+	if err != nil {
+		return "", r.fail(ctx, pid, "container_create", err)
+	}
+	if err := r.docker.ContainerStart(ctx, cid); err != nil {
+		_ = r.docker.ContainerRemove(ctx, cid, RemoveOptions{Force: true})
+		return "", r.fail(ctx, pid, "container_start", err)
+	}
+	return cid, nil
+}
+
 // Teardown 은 JOB_TEARDOWN 1건을 처리한다.
 func (r *Runner) Teardown(ctx context.Context, previewID string) error {
 	v, ok := r.jobs.Load(previewID)
 	if !ok {
-		// 메모리 미등록 — 그래도 worktree 정리 시도 + done 송신.
-		_ = r.cache.Remove(ctx, previewID)
 		_ = r.hub.SendStatusUpdate(ctx, protocol.StatusUpdateData{PreviewID: previewID, Status: "done"})
 		return nil
 	}
 	job := v.(*runningJob)
-	_ = r.docker.ContainerStop(ctx, job.containerID)
-	_ = r.docker.ContainerRemove(ctx, job.containerID, RemoveOptions{Force: true})
-	if err := r.cache.Remove(ctx, previewID); err != nil {
-		r.logger.Warn("teardown_worktree_remove_failed", "preview_id", previewID, "err", err.Error())
+
+	switch job.buildMode {
+	case buildModeCompose:
+		projectName := "preview-" + previewID
+		if err := r.cmd.Run(ctx, "docker", "compose", "--project-name", projectName, "down"); err != nil {
+			r.logger.Warn("compose_down_failed", "preview_id", previewID, "err", err.Error())
+		}
+		overridePath := filepath.Join(job.worktreePath, ".preview-override-"+previewID+".yml")
+		_ = os.Remove(overridePath)
+	default:
+		_ = r.docker.ContainerStop(ctx, job.containerID)
+		_ = r.docker.ContainerRemove(ctx, job.containerID, RemoveOptions{Force: true})
+	}
+
+	if job.repoURL != "" {
+		if err := r.cache.Remove(ctx, job.repoURL, previewID); err != nil {
+			r.logger.Warn("teardown_worktree_remove_failed", "preview_id", previewID, "err", err.Error())
+		}
 	}
 	r.jobs.Delete(previewID)
+
 	if err := r.hub.SendStatusUpdate(ctx, protocol.StatusUpdateData{PreviewID: previewID, Status: "done"}); err != nil {
 		return fmt.Errorf("runner.Teardown: send done: %w", err)
 	}
 	return nil
+}
+
+// detectBuildFiles 는 worktree 에서 compose/Dockerfile 파일을 감지한다.
+// compose 파일 우선 (결정 9).
+func (r *Runner) detectBuildFiles(worktree string, cfg PreviewConfig) (composefile, dockerfilepath, mode string, err error) {
+	if cfg.ComposeFile != "" {
+		return filepath.Join(worktree, cfg.ComposeFile), "", buildModeCompose, nil
+	}
+	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+		p := filepath.Join(worktree, name)
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p, "", buildModeCompose, nil
+		}
+	}
+	if cfg.Dockerfile != "" {
+		return "", filepath.Join(worktree, cfg.Dockerfile), buildModeDockerfile, nil
+	}
+	p := filepath.Join(worktree, "Dockerfile")
+	if _, statErr := os.Stat(p); statErr == nil {
+		return "", p, buildModeDockerfile, nil
+	}
+	return "", "", "", errors.New("no docker-compose.yml or Dockerfile found in worktree")
 }
 
 // fail 은 STATUS_UPDATE failed 를 송신하고 에러를 반환한다.
@@ -231,7 +354,7 @@ func (r *Runner) fail(ctx context.Context, previewID, reason string, cause error
 }
 
 // allocatePort 는 net.Listen(":0") 으로 free port 를 추출한다.
-// retries 가 1 이상이면 1회 재시도. 0 이면 단일 시도.
+// Phase 6: 컨테이너 직접 host 포트 노출이 불필요해졌으나 유틸리티로 유지.
 func allocatePort(retries int) (int, error) {
 	var lastErr error
 	if retries < 1 {

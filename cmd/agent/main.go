@@ -62,11 +62,11 @@ func runStart(args []string) error {
 		"work_dir", cfg.WorkDir,
 		"prefetch_interval", cfg.PrefetchInterval.String(),
 		"max_jobs", cfg.MaxJobs,
+		"traefik_port", cfg.TraefikPort,
 	)
 
-	// Phase 6: MultiRepoCache replaces single-repo RepoCache (runner rewrite pending).
-	// Use an empty-URL RepoCache as placeholder until runner.go is rewritten.
-	cache := agent.NewRepoCache(cfg.WorkDir, "", logger)
+	// Phase 6: MultiRepoCache — per-repoURL bare clone 디렉토리 관리 (결정 8).
+	cache := agent.NewMultiRepoCache(cfg.WorkDir, logger)
 
 	docker, err := newSDKDockerClient()
 	if err != nil {
@@ -76,8 +76,22 @@ func runStart(args []string) error {
 		logger.Warn("docker_ping_failed", "err", err.Error())
 	}
 
+	// Phase 6: preview-net + Traefik 사이드카 idempotent 기동 (결정 4).
+	if err := agent.EnsureNetwork(ctx, docker, "preview-net"); err != nil {
+		logger.Warn("ensure_network_failed", "err", err.Error())
+	}
+	if err := agent.EnsureTraefik(ctx, docker, agent.TraefikSpec{
+		Image:     cfg.TraefikImage,
+		HostPort:  cfg.TraefikPort,
+		Network:   "preview-net",
+		Container: "preview-traefik",
+	}); err != nil {
+		logger.Warn("ensure_traefik_failed", "err", err.Error())
+	}
+
 	c := agent.NewClient(cfg, logger)
-	runner := agent.NewRunner(docker, cache, c, cfg.AdvertiseHost, logger)
+	runner := agent.NewRunner(docker, cache, nil, c, cfg.AdvertiseHost, logger)
+	runner.SetTraefikPort(cfg.TraefikPort)
 	c.SetRunner(runner)
 
 	// Phase 5: 다중 Job 슬롯 + READY 재전송 의존 주입.
