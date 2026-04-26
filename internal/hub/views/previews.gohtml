@@ -38,6 +38,7 @@
         <th scope="col">Status</th>
         <th scope="col">Branch</th>
         <th scope="col">Agent</th>
+        <th scope="col">URLs</th>
         <th scope="col">Updated</th>
       </tr>
     </thead>
@@ -49,6 +50,7 @@
         <td>{{.Status}}</td>
         <td>{{.Branch}}</td>
         <td>{{.AgentLabel}}</td>
+        <td>{{if .PreviewURLs}}{{range $name, $url := .PreviewURLs}}<a href="{{$url}}">{{$name}}</a> {{end}}{{else}}<em>—</em>{{end}}</td>
         <td>{{.UpdatedString}}</td>
       </tr>
     {{end}}

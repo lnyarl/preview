@@ -14,7 +14,7 @@
     <dt>Commit</dt><dd>{{.Preview.CommitSha}}</dd>
     <dt>Branch</dt><dd>{{.Preview.Branch}}</dd>
     <dt>Agent</dt><dd>{{.AgentLine}}</dd>
-    <dt>URL</dt><dd>{{if .PublicURL}}<a href="{{.PublicURL}}">{{.PublicURL}}</a>{{else}}<em>not running</em>{{end}}</dd>
+    <dt>URLs</dt><dd>{{if .PreviewURLs}}{{range $name, $url := .PreviewURLs}}<a href="{{$url}}">{{$name}}</a> {{end}}{{else}}<em>not running</em>{{end}}</dd>
   </dl>
 </section>
 

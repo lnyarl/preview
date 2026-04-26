@@ -11,6 +11,7 @@ package hub
 
 import (
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -356,6 +357,7 @@ type previewRow struct {
 	Branch        string
 	AgentLabel    string
 	UpdatedString string
+	PreviewURLs   map[string]string // Phase 6: service → URL
 }
 
 type previewsFilter struct {
@@ -397,6 +399,10 @@ func (h *AdminUIHandler) previewsList(w http.ResponseWriter, r *http.Request) {
 		if p.AssignedAgentID != nil {
 			agentLabel = *p.AssignedAgentID
 		}
+		var previewURLs map[string]string
+		if p.PreviewURLs != "" {
+			_ = json.Unmarshal([]byte(p.PreviewURLs), &previewURLs)
+		}
 		rows = append(rows, previewRow{
 			ID:            p.ID,
 			PrNumber:      p.PrNumber,
@@ -405,6 +411,7 @@ func (h *AdminUIHandler) previewsList(w http.ResponseWriter, r *http.Request) {
 			Branch:        p.Branch,
 			AgentLabel:    agentLabel,
 			UpdatedString: p.UpdatedAt.UTC().Format(time.RFC3339),
+			PreviewURLs:   previewURLs,
 		})
 	}
 	h.renderHTML(w, http.StatusOK, "previews.gohtml", previewsView{
@@ -436,7 +443,7 @@ type previewDetailView struct {
 	Title           string
 	Preview         previewDetailRow
 	AgentLine       string
-	PublicURL       string
+	PreviewURLs     map[string]string // Phase 6: service → URL (parsed from JSON)
 	Events          []eventRow
 	RebuildEnabled  bool
 	ConflictMessage string
@@ -488,10 +495,11 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			agentLine = fmt.Sprintf("%s (%s:%d)", *p.AssignedAgentID, *p.AgentHost, *p.AgentPort)
 		}
 	}
-	// Phase 6: PublicURL 컬럼이 사라지고 PreviewURLs (JSON 직렬화 문자열) 가 들어왔다.
-	// 본 commit 에서는 템플릿 변경을 미루기 위해 raw 문자열을 그대로 표시한다 —
-	// 다음 commit 에서 service→URL 매핑 렌더로 교체.
-	publicURL := p.PreviewURLs
+	// Phase 6: preview_urls JSON 문자열 → map[string]string 파싱.
+	var previewURLs map[string]string
+	if p.PreviewURLs != "" {
+		_ = json.Unmarshal([]byte(p.PreviewURLs), &previewURLs)
+	}
 	rebuildEnabled := p.Status == "done" || p.Status == "failed"
 	conflict := r.URL.Query().Get("msg")
 	view := previewDetailView{
@@ -505,7 +513,7 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			Status:       p.Status,
 		},
 		AgentLine:       agentLine,
-		PublicURL:       publicURL,
+		PreviewURLs:     previewURLs,
 		Events:          rows,
 		RebuildEnabled:  rebuildEnabled,
 		ConflictMessage: conflict,
