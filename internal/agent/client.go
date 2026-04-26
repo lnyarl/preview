@@ -6,7 +6,7 @@
 //   - 연결 유실 시 지수 백오프로 재시도.
 //   - Phase 2: WELCOME 후 READY 송신 + JOB_ASSIGN/JOB_TEARDOWN dispatch.
 //   - Phase 5: 초기 READY 는 runner.maybeSendReady 로 가용 슬롯 수만큼 송신.
-//     SendReady 메서드를 노출해 Runner 의 ReadySender 인터페이스를 만족.
+//   - Phase 6: Holder / AGENT_CONFIG / CONFIG_UPDATE 제거 (결정 13).
 //
 // 참고: 기획서 §4-3-1, 결정 4/5/10, phase-5 §3 결정 5/7/8.
 package agent
@@ -257,21 +257,6 @@ func (c *Client) dispatchMessage(ctx context.Context, env protocol.Envelope) {
 				c.logger.Warn("runner_teardown_failed", "preview_id", data.PreviewID, "err", err.Error())
 			}
 		}()
-	case protocol.TypeAgentConfig, protocol.TypeConfigUpdate:
-		// Phase 4: Hub 가 보낸 빌드 설정을 Holder 에 atomic 적용.
-		// 두 메시지의 페이로드 스키마는 동일 (결정 8). 의도가 다를 뿐.
-		var data protocol.AgentConfigData
-		if err := env.Decode(&data); err != nil {
-			c.logger.Warn("agent_config_decode_failed", "type", env.Type, "err", err.Error())
-			return
-		}
-		if c.holder == nil {
-			c.logger.Debug("agent_config_no_holder", "type", env.Type)
-			return
-		}
-		c.holder.Replace(data)
-		c.logger.Info("agent_config_applied",
-			"type", env.Type, "commands", len(data.RunCommands), "port", data.ContainerPort)
 	default:
 		c.logger.Debug("ws_message_received", "type", env.Type)
 	}

@@ -59,20 +59,14 @@ func runStart(args []string) error {
 
 	logger.Info("agent_start",
 		"hub_url", cfg.HubURL,
-		"repo_url", cfg.RepoURL,
 		"work_dir", cfg.WorkDir,
 		"prefetch_interval", cfg.PrefetchInterval.String(),
 		"max_jobs", cfg.MaxJobs,
 	)
 
-	// Phase 2: RepoCache + Docker SDK + Runner + Client wiring.
-	cache := agent.NewRepoCache(cfg.WorkDir, cfg.RepoURL, logger)
-	if err := cache.Ensure(ctx); err != nil {
-		return fmt.Errorf("repocache ensure: %w", err)
-	}
-	if cfg.PrefetchInterval > 0 {
-		go cache.StartPrefetch(ctx, cfg.PrefetchInterval)
-	}
+	// Phase 6: MultiRepoCache replaces single-repo RepoCache (runner rewrite pending).
+	// Use an empty-URL RepoCache as placeholder until runner.go is rewritten.
+	cache := agent.NewRepoCache(cfg.WorkDir, "", logger)
 
 	docker, err := newSDKDockerClient()
 	if err != nil {
