@@ -3,10 +3,14 @@
 //   - Phase 2: --work-dir / --prefetch-interval / --max-jobs.
 //   - Phase 5: --max-jobs hard cap 64 클램프 (결정 11).
 //   - Phase 6: --repo-url 제거, --traefik-port / --traefik-image 추가 (결정 13/14).
+//   - Phase 7: --traefik-api-port (default 9080, 0=비활성) +
+//     --router-ready-timeout (default 30s, 0=비활성) 추가. 동일 포트(traefik-port
+//     == traefik-api-port) 차단(S5 1차 방어선).
 //
 // 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-7,
 //
-//	docs/specs/phase-6-docker-native.md §4-8.
+//	docs/specs/phase-6-docker-native.md §4-8,
+//	docs/specs/phase-7-traefik-readiness.md §4-4, 결정 3/11, S5.
 package agent
 
 import (
@@ -26,33 +30,38 @@ const maxJobsHardCap = 64
 
 // Config 는 Agent start 서브커맨드 실행에 필요한 설정.
 type Config struct {
-	HubURL           string
-	Token            string
-	AdvertiseHost    string
-	LogLevel         string
-	WorkDir          string        // RepoCache 루트.
-	PrefetchInterval time.Duration // 0 = 비활성.
-	MaxJobs          int           // 동시 슬롯 한도. 기본 1.
-	TraefikPort      int           // Phase 6: Traefik 호스트 바인딩 포트 (default 8080).
-	TraefikImage     string        // Phase 6: Traefik Docker 이미지 (default "traefik:v3.1").
+	HubURL             string
+	Token              string
+	AdvertiseHost      string
+	LogLevel           string
+	WorkDir            string        // RepoCache 루트.
+	PrefetchInterval   time.Duration // 0 = 비활성.
+	MaxJobs            int           // 동시 슬롯 한도. 기본 1.
+	TraefikPort        int           // Phase 6: Traefik 호스트 바인딩 포트 (default 8080).
+	TraefikImage       string        // Phase 6: Traefik Docker 이미지 (default "traefik:v3.1").
+	TraefikAPIPort     int           // Phase 7: Traefik API 호스트 포트 (default 9080, 0=비활성).
+	RouterReadyTimeout time.Duration // Phase 7: WaitTraefikRouters timeout (default 30s, 0=비활성).
 }
 
 // ParseConfig 는 주어진 args 로부터 Config 를 만든다. args 는 os.Args[2:] 상당.
 // env: HUB_URL, HUB_TOKEN, AGENT_ADVERTISE_HOST, LOG_LEVEL,
 // AGENT_WORK_DIR, AGENT_PREFETCH_INTERVAL, AGENT_MAX_JOBS,
-// AGENT_TRAEFIK_PORT, AGENT_TRAEFIK_IMAGE.
+// AGENT_TRAEFIK_PORT, AGENT_TRAEFIK_IMAGE,
+// AGENT_TRAEFIK_API_PORT (Phase 7), AGENT_ROUTER_READY_TIMEOUT (Phase 7).
 func ParseConfig(args []string) (Config, error) {
 	fs := flag.NewFlagSet("agent start", flag.ContinueOnError)
 	var (
-		hubURL      = fs.String("hub-url", os.Getenv("HUB_URL"), "Hub WebSocket URL")
-		tokenFlg    = fs.String("token", os.Getenv("HUB_TOKEN"), "Agent token (agt_...)")
-		advHost     = fs.String("advertise-host", os.Getenv("AGENT_ADVERTISE_HOST"), "Host address to advertise in HELLO")
-		logLvl      = fs.String("log-level", envOr("LOG_LEVEL", "info"), "log level: debug/info/warn/error")
-		workDir     = fs.String("work-dir", envOr("AGENT_WORK_DIR", defaultWorkDir()), "RepoCache root directory")
-		prefetch    = fs.String("prefetch-interval", envOr("AGENT_PREFETCH_INTERVAL", "5m"), "background fetch interval; 0 disables")
-		maxJobs     = fs.Int("max-jobs", envInt("AGENT_MAX_JOBS", 1), "max concurrent preview jobs")
-		traefikPort = fs.Int("traefik-port", envInt("AGENT_TRAEFIK_PORT", 8080), "Traefik host binding port")
-		traefikImg  = fs.String("traefik-image", envOr("AGENT_TRAEFIK_IMAGE", "traefik:v3.1"), "Traefik Docker image")
+		hubURL         = fs.String("hub-url", os.Getenv("HUB_URL"), "Hub WebSocket URL")
+		tokenFlg       = fs.String("token", os.Getenv("HUB_TOKEN"), "Agent token (agt_...)")
+		advHost        = fs.String("advertise-host", os.Getenv("AGENT_ADVERTISE_HOST"), "Host address to advertise in HELLO")
+		logLvl         = fs.String("log-level", envOr("LOG_LEVEL", "info"), "log level: debug/info/warn/error")
+		workDir        = fs.String("work-dir", envOr("AGENT_WORK_DIR", defaultWorkDir()), "RepoCache root directory")
+		prefetch       = fs.String("prefetch-interval", envOr("AGENT_PREFETCH_INTERVAL", "5m"), "background fetch interval; 0 disables")
+		maxJobs        = fs.Int("max-jobs", envInt("AGENT_MAX_JOBS", 1), "max concurrent preview jobs")
+		traefikPort    = fs.Int("traefik-port", envInt("AGENT_TRAEFIK_PORT", 8080), "Traefik host binding port")
+		traefikImg     = fs.String("traefik-image", envOr("AGENT_TRAEFIK_IMAGE", "traefik:v3.1"), "Traefik Docker image")
+		traefikAPIPort = fs.Int("traefik-api-port", envInt("AGENT_TRAEFIK_API_PORT", 9080), "Traefik API host binding port (0 disables readiness probe)")
+		routerReady    = fs.String("router-ready-timeout", envOr("AGENT_ROUTER_READY_TIMEOUT", "30s"), "Traefik router readiness probe timeout (e.g. 30s, 0 disables)")
 	)
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -81,16 +90,34 @@ func ParseConfig(args []string) (Config, error) {
 	if *traefikPort < 1 || *traefikPort > 65535 {
 		return Config{}, fmt.Errorf("invalid --traefik-port %d: must be 1..65535", *traefikPort)
 	}
+	// Phase 7: traefik-api-port 범위 검증 (0 허용 = probe 비활성).
+	if *traefikAPIPort < 0 || *traefikAPIPort > 65535 {
+		return Config{}, fmt.Errorf("invalid --traefik-api-port %d: must be 0..65535", *traefikAPIPort)
+	}
+	// Phase 7 (S5): 동일 포트 차단 — 1차 방어선 (EnsureTraefik 가 2차).
+	if *traefikAPIPort > 0 && *traefikAPIPort == *traefikPort {
+		return Config{}, fmt.Errorf("--traefik-api-port and --traefik-port must differ (both = %d)", *traefikPort)
+	}
+	// Phase 7: router-ready-timeout 파싱 (Phase 6 prefetch 와 동일 패턴).
+	rrt, err := time.ParseDuration(*routerReady)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid --router-ready-timeout %q: %w", *routerReady, err)
+	}
+	if rrt < 0 {
+		return Config{}, fmt.Errorf("invalid --router-ready-timeout %q: must be >= 0", *routerReady)
+	}
 	return Config{
-		HubURL:           *hubURL,
-		Token:            *tokenFlg,
-		AdvertiseHost:    *advHost,
-		LogLevel:         *logLvl,
-		WorkDir:          *workDir,
-		PrefetchInterval: pf,
-		MaxJobs:          *maxJobs,
-		TraefikPort:      *traefikPort,
-		TraefikImage:     *traefikImg,
+		HubURL:             *hubURL,
+		Token:              *tokenFlg,
+		AdvertiseHost:      *advHost,
+		LogLevel:           *logLvl,
+		WorkDir:            *workDir,
+		PrefetchInterval:   pf,
+		MaxJobs:            *maxJobs,
+		TraefikPort:        *traefikPort,
+		TraefikImage:       *traefikImg,
+		TraefikAPIPort:     *traefikAPIPort,
+		RouterReadyTimeout: rrt, // 0 허용 (probe 비활성).
 	}, nil
 }
 

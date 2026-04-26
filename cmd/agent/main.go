@@ -81,10 +81,11 @@ func runStart(args []string) error {
 		logger.Warn("ensure_network_failed", "err", err.Error())
 	}
 	if err := agent.EnsureTraefik(ctx, docker, agent.TraefikSpec{
-		Image:     cfg.TraefikImage,
-		HostPort:  cfg.TraefikPort,
-		Network:   "preview-net",
-		Container: "preview-traefik",
+		Image:       cfg.TraefikImage,
+		HostPort:    cfg.TraefikPort,
+		APIHostPort: cfg.TraefikAPIPort, // Phase 7: 0 = probe 비활성.
+		Network:     "preview-net",
+		Container:   "preview-traefik",
 	}); err != nil {
 		logger.Warn("ensure_traefik_failed", "err", err.Error())
 	}

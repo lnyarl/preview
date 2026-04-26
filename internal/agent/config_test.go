@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestParseConfigFlags(t *testing.T) {
@@ -199,5 +200,166 @@ func TestParseConfigTraefikImageFlag(t *testing.T) {
 	}
 	if cfg.TraefikImage != "traefik:v2.10" {
 		t.Fatalf("TraefikImage=%q want traefik:v2.10", cfg.TraefikImage)
+	}
+}
+
+// ---------- Phase 7: --traefik-api-port / --router-ready-timeout ----------
+
+func resetPhase7Env(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"HUB_URL", "HUB_TOKEN",
+		"AGENT_TRAEFIK_PORT", "AGENT_TRAEFIK_IMAGE",
+		"AGENT_TRAEFIK_API_PORT", "AGENT_ROUTER_READY_TIMEOUT",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
+// F-37: --traefik-api-port 미지정 시 default 9080.
+func TestParseConfigTraefikAPIPortDefault(t *testing.T) {
+	resetPhase7Env(t)
+	cfg, err := ParseConfig([]string{"--hub-url", "ws://x", "--token", "agt_y"})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikAPIPort != 9080 {
+		t.Fatalf("TraefikAPIPort=%d want 9080", cfg.TraefikAPIPort)
+	}
+}
+
+// F-38: --traefik-api-port=0 명시 → cfg.TraefikAPIPort==0 (정상).
+func TestParseConfigTraefikAPIPortZero(t *testing.T) {
+	resetPhase7Env(t)
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--traefik-api-port", "0",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikAPIPort != 0 {
+		t.Fatalf("TraefikAPIPort=%d want 0", cfg.TraefikAPIPort)
+	}
+}
+
+// F-39: --traefik-api-port=70000 → 에러.
+func TestParseConfigTraefikAPIPortOutOfRange(t *testing.T) {
+	resetPhase7Env(t)
+	_, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--traefik-api-port", "70000",
+	})
+	if err == nil {
+		t.Fatal("expected error for --traefik-api-port=70000")
+	}
+}
+
+// F-40: --traefik-api-port == --traefik-port → 에러 (must differ).
+func TestParseConfigTraefikAPIPortSameAsTraefik(t *testing.T) {
+	resetPhase7Env(t)
+	_, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--traefik-port", "8080",
+		"--traefik-api-port", "8080",
+	})
+	if err == nil {
+		t.Fatal("expected error for --traefik-port == --traefik-api-port")
+	}
+}
+
+// F-41: --router-ready-timeout=30s → 30s.
+func TestParseConfigRouterReadyTimeoutFlag(t *testing.T) {
+	resetPhase7Env(t)
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--router-ready-timeout", "30s",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.RouterReadyTimeout != 30*time.Second {
+		t.Fatalf("RouterReadyTimeout=%v want 30s", cfg.RouterReadyTimeout)
+	}
+}
+
+// F-42: --router-ready-timeout=0 → 0 (probe disabled).
+func TestParseConfigRouterReadyTimeoutZero(t *testing.T) {
+	resetPhase7Env(t)
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--router-ready-timeout", "0s",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.RouterReadyTimeout != 0 {
+		t.Fatalf("RouterReadyTimeout=%v want 0", cfg.RouterReadyTimeout)
+	}
+}
+
+// F-43: --router-ready-timeout=-5s → 에러.
+func TestParseConfigRouterReadyTimeoutNegative(t *testing.T) {
+	resetPhase7Env(t)
+	_, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--router-ready-timeout", "-5s",
+	})
+	if err == nil {
+		t.Fatal("expected error for negative router-ready-timeout")
+	}
+}
+
+// F-44: --router-ready-timeout=foo → 에러 (parse 실패).
+func TestParseConfigRouterReadyTimeoutInvalid(t *testing.T) {
+	resetPhase7Env(t)
+	_, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--router-ready-timeout", "foo",
+	})
+	if err == nil {
+		t.Fatal("expected parse error for --router-ready-timeout=foo")
+	}
+}
+
+// F-45: env AGENT_TRAEFIK_API_PORT=9090 가 default 9080 보다 우선.
+func TestParseConfigTraefikAPIPortEnv(t *testing.T) {
+	t.Setenv("HUB_URL", "ws://x")
+	t.Setenv("HUB_TOKEN", "agt_y")
+	t.Setenv("AGENT_TRAEFIK_API_PORT", "9090")
+	t.Setenv("AGENT_ROUTER_READY_TIMEOUT", "")
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikAPIPort != 9090 {
+		t.Fatalf("TraefikAPIPort=%d want 9090", cfg.TraefikAPIPort)
+	}
+}
+
+// F-46: env AGENT_ROUTER_READY_TIMEOUT=10s 가 default 30s 보다 우선.
+func TestParseConfigRouterReadyTimeoutEnv(t *testing.T) {
+	t.Setenv("HUB_URL", "ws://x")
+	t.Setenv("HUB_TOKEN", "agt_y")
+	t.Setenv("AGENT_TRAEFIK_API_PORT", "")
+	t.Setenv("AGENT_ROUTER_READY_TIMEOUT", "10s")
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.RouterReadyTimeout != 10*time.Second {
+		t.Fatalf("RouterReadyTimeout=%v want 10s", cfg.RouterReadyTimeout)
+	}
+}
+
+// Default RouterReadyTimeout — 30s.
+func TestParseConfigRouterReadyTimeoutDefault(t *testing.T) {
+	resetPhase7Env(t)
+	cfg, err := ParseConfig([]string{"--hub-url", "ws://x", "--token", "agt_y"})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.RouterReadyTimeout != 30*time.Second {
+		t.Fatalf("RouterReadyTimeout=%v want 30s", cfg.RouterReadyTimeout)
 	}
 }

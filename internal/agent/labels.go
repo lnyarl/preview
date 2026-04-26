@@ -2,8 +2,11 @@
 //   - PreviewConfig + previewID 로부터 Traefik 컨테이너 라벨 맵 생성 (ServiceLabels).
 //   - compose 모드에서 사용할 override YAML 직렬화 (ComposeOverrideYAML).
 //   - STATUS_UPDATE 에 실리는 preview_urls 맵 생성 (PreviewURLs).
+//   - Phase 7: RouterNames — buildMode 에 따라 Traefik 에 실제 등록되는 라우터
+//     이름 슬롯을 1 곳에서 결정 (결정 8). compose → 전체 services 알파벳 오름차순,
+//     dockerfile → cfg.FirstService() 1 개만, unknown → 빈 슬라이스(silent).
 //
-// §4-5, 결정 5, 10, 11, 17.
+// 참고: phase-6 §4-5, 결정 5/10/11/17; phase-7 §4-3, 결정 8.
 package agent
 
 import (
@@ -104,6 +107,37 @@ func ComposeOverrideYAML(previewID string, cfg PreviewConfig) ([]byte, error) {
 		},
 	}
 	return yaml.Marshal(override)
+}
+
+// RouterNames 는 .preview.yml 의 services 와 previewID 로부터 Traefik 라우터 이름
+// 슬라이스를 알파벳 오름차순으로 반환한다 (Phase 7 결정 8).
+//
+// 라우터 이름은 ServiceLabels 내부의 "{previewID}-{svcName}" 규칙과 동일해야 한다.
+//
+//   - buildMode == buildModeCompose    → services 전체를 알파벳 오름차순으로 반환.
+//   - buildMode == buildModeDockerfile → cfg.FirstService() 1 개만 반환.
+//     (Dockerfile 모드는 단일 컨테이너만 띄우고 첫 service 의 라벨만 부착하므로,
+//     다른 service 이름의 라우터를 polling 하면 영원히 미존재 — Phase 6 결정 10.)
+//   - 그 외(unknown) → 빈 슬라이스 반환 (silent). 로깅 책임은 호출자(Runner.waitRouters).
+//     본 함수는 logger 의존 0 → 순수 함수, 단위 테스트 단순.
+func RouterNames(previewID string, cfg PreviewConfig, buildMode string) []string {
+	switch buildMode {
+	case buildModeCompose:
+		names := make([]string, 0, len(cfg.Services))
+		for name := range cfg.Services {
+			names = append(names, previewID+"-"+name)
+		}
+		sort.Strings(names)
+		return names
+	case buildModeDockerfile:
+		svcName, _, ok := cfg.FirstService()
+		if !ok {
+			return []string{}
+		}
+		return []string{previewID + "-" + svcName}
+	default:
+		return []string{}
+	}
 }
 
 // PreviewURLs 는 STATUS_UPDATE 에 실리는 service 이름 → 전체 URL 맵을 반환한다 (결정 11).

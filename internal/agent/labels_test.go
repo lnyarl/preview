@@ -164,3 +164,83 @@ func TestPreviewURLsDefaultHost(t *testing.T) {
 		t.Errorf("expected 127.0.0.1 fallback, got %q", got)
 	}
 }
+
+// ---------- Phase 7: RouterNames ----------
+
+// F-35: services 3 개에서 [pid-a, pid-b, pid-c] 알파벳 오름차순.
+func TestRouterNamesComposeSorted(t *testing.T) {
+	cfg := PreviewConfig{
+		Services: map[string]PreviewService{
+			"c": {Port: 3000, Path: "/c"},
+			"a": {Port: 3001, Path: "/a"},
+			"b": {Port: 3002, Path: "/b"},
+		},
+	}
+	got := RouterNames("pid", cfg, buildModeCompose)
+	want := []string{"pid-a", "pid-b", "pid-c"}
+	if len(got) != len(want) {
+		t.Fatalf("got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got=%v want=%v", got, want)
+		}
+	}
+}
+
+// F-35b: dockerfile 모드는 services 3 개여도 cfg.FirstService() 1 개만.
+func TestRouterNamesDockerfileFirstOnly(t *testing.T) {
+	cfg := PreviewConfig{
+		Services: map[string]PreviewService{
+			"c": {Port: 3000, Path: "/c"},
+			"a": {Port: 3001, Path: "/a"},
+			"b": {Port: 3002, Path: "/b"},
+		},
+	}
+	got := RouterNames("pid", cfg, buildModeDockerfile)
+	if len(got) != 1 || got[0] != "pid-a" {
+		t.Fatalf("got=%v want=[pid-a] (alphabetical first)", got)
+	}
+}
+
+// F-35c: dockerfile + services 비어있음 → 빈 슬라이스.
+func TestRouterNamesDockerfileEmptyServices(t *testing.T) {
+	cfg := PreviewConfig{Services: map[string]PreviewService{}}
+	got := RouterNames("pid", cfg, buildModeDockerfile)
+	if len(got) != 0 {
+		t.Fatalf("got=%v want empty slice", got)
+	}
+}
+
+// F-35d (RouterNames part): unknown buildMode → 빈 슬라이스 (logger 없음).
+func TestRouterNamesUnknownBuildMode(t *testing.T) {
+	cfg := PreviewConfig{
+		Services: map[string]PreviewService{"app": {Port: 80, Path: "/app"}},
+	}
+	got := RouterNames("pid", cfg, "xyz")
+	if len(got) != 0 {
+		t.Fatalf("got=%v want empty for unknown buildMode", got)
+	}
+}
+
+// F-36: RouterNames 의 결과가 ServiceLabels 의 router 키 prefix 와 정확히 일치.
+func TestRouterNamesMatchesServiceLabelsPrefix(t *testing.T) {
+	cfg := PreviewConfig{
+		Services: map[string]PreviewService{
+			"app":   {Port: 3000, Path: "/app"},
+			"admin": {Port: 8080, Path: "/admin"},
+		},
+	}
+	names := RouterNames("pid", cfg, buildModeCompose)
+	for _, name := range names {
+		// name 형태는 "pid-{svc}".
+		svcName := strings.TrimPrefix(name, "pid-")
+		svc := cfg.Services[svcName]
+		lbls := ServiceLabels("pid", svcName, svc)
+		// ServiceLabels 가 "traefik.http.routers.{name}." prefix 라벨을 적어도 1개 이상 보유.
+		key := "traefik.http.routers." + name + ".rule"
+		if _, ok := lbls[key]; !ok {
+			t.Errorf("label %q missing from ServiceLabels output for %q", key, name)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -241,5 +242,130 @@ func TestSpecHashDifferentForDifferentSpec(t *testing.T) {
 	s2 := TraefikSpec{Image: "traefik:v3.1", HostPort: 9090, Network: "preview-net", Container: "c"}
 	if specHash(s1) == specHash(s2) {
 		t.Fatal("specHash should differ for different HostPort")
+	}
+}
+
+// ---------- Phase 7 tests ----------
+
+// F-21 / F-22: APIHostPort > 0 → cmd 에 --api.insecure=true 포함 +
+// PortBindings 에 {ContainerPort:8080, HostPort:APIHostPort} 포함.
+func TestEnsureTraefikAPIPortEnabled(t *testing.T) {
+	dc := newTraefikFakeDocker()
+	spec := TraefikSpec{
+		Image: "traefik:v3.1", HostPort: 8080, APIHostPort: 9080,
+		Network: "preview-net", Container: "preview-traefik",
+	}
+	if err := EnsureTraefik(context.Background(), dc, spec); err != nil {
+		t.Fatalf("EnsureTraefik: %v", err)
+	}
+	if len(dc.createCalls) != 1 {
+		t.Fatalf("createCalls=%d want 1", len(dc.createCalls))
+	}
+	opts := dc.createCalls[0]
+
+	// cmd 에 --api.insecure=true 포함.
+	gotInsecure := false
+	gotEntry := false
+	for _, c := range opts.Cmd {
+		if c == "--api.insecure=true" {
+			gotInsecure = true
+		}
+		if c == "--entrypoints.traefik.address=:8080" {
+			gotEntry = true
+		}
+	}
+	if !gotInsecure {
+		t.Errorf("Cmd missing --api.insecure=true: %v", opts.Cmd)
+	}
+	if !gotEntry {
+		t.Errorf("Cmd missing --entrypoints.traefik.address=:8080: %v", opts.Cmd)
+	}
+
+	// PortBindings 에 80+8080 두 개.
+	if len(opts.PortBindings) != 2 {
+		t.Fatalf("PortBindings=%v want 2 entries", opts.PortBindings)
+	}
+	gotWeb := false
+	gotAPI := false
+	for _, pb := range opts.PortBindings {
+		if pb.ContainerPort == 80 && pb.HostPort == 8080 {
+			gotWeb = true
+		}
+		if pb.ContainerPort == 8080 && pb.HostPort == 9080 {
+			gotAPI = true
+		}
+	}
+	if !gotWeb {
+		t.Errorf("PortBindings missing 80→8080: %v", opts.PortBindings)
+	}
+	if !gotAPI {
+		t.Errorf("PortBindings missing 8080→9080: %v", opts.PortBindings)
+	}
+}
+
+// F-23: APIHostPort == 0 → cmd 에 --api.insecure 미포함 + PortBindings 에 8080 미포함.
+func TestEnsureTraefikAPIPortDisabled(t *testing.T) {
+	dc := newTraefikFakeDocker()
+	spec := TraefikSpec{
+		Image: "traefik:v3.1", HostPort: 8080, APIHostPort: 0,
+		Network: "preview-net", Container: "preview-traefik",
+	}
+	if err := EnsureTraefik(context.Background(), dc, spec); err != nil {
+		t.Fatalf("EnsureTraefik: %v", err)
+	}
+	opts := dc.createCalls[0]
+	for _, c := range opts.Cmd {
+		if c == "--api.insecure=true" || c == "--entrypoints.traefik.address=:8080" {
+			t.Errorf("Cmd should not contain %q when APIHostPort=0", c)
+		}
+	}
+	if len(opts.PortBindings) != 1 {
+		t.Fatalf("PortBindings=%v want 1 entry only", opts.PortBindings)
+	}
+	if opts.PortBindings[0].ContainerPort != 80 {
+		t.Errorf("first binding ContainerPort=%d want 80", opts.PortBindings[0].ContainerPort)
+	}
+}
+
+// F-24: specHash 가 APIHostPort 변경에 반응 (0 → 9080 → 9081 모두 다른 해시).
+func TestSpecHashReactsToAPIHostPort(t *testing.T) {
+	base := TraefikSpec{Image: "traefik:v3.1", HostPort: 8080, Network: "preview-net", Container: "c"}
+	h0 := specHash(base)
+	s1 := base
+	s1.APIHostPort = 9080
+	h1 := specHash(s1)
+	s2 := base
+	s2.APIHostPort = 9081
+	h2 := specHash(s2)
+	if h0 == h1 || h1 == h2 || h0 == h2 {
+		t.Fatalf("specHash should differ for different APIHostPort: %s/%s/%s", h0, h1, h2)
+	}
+}
+
+// F-26: APIHostPort == HostPort > 0 → ErrTraefikPortConflict.
+func TestEnsureTraefikRejectsSamePorts(t *testing.T) {
+	dc := newTraefikFakeDocker()
+	spec := TraefikSpec{
+		Image: "traefik:v3.1", HostPort: 8080, APIHostPort: 8080,
+		Network: "preview-net", Container: "preview-traefik",
+	}
+	err := EnsureTraefik(context.Background(), dc, spec)
+	if !errors.Is(err, ErrTraefikPortConflict) {
+		t.Fatalf("err=%v want ErrTraefikPortConflict", err)
+	}
+	if len(dc.createCalls) != 0 {
+		t.Errorf("createCalls=%d want 0 (rejected at entry)", len(dc.createCalls))
+	}
+}
+
+// F-26b: APIHostPort == 0 이면 HostPort 와 무관하게 conflict 미체크.
+func TestEnsureTraefikAllowsZeroAPIPortAnyHostPort(t *testing.T) {
+	dc := newTraefikFakeDocker()
+	spec := TraefikSpec{
+		Image: "traefik:v3.1", HostPort: 8080, APIHostPort: 0,
+		Network: "preview-net", Container: "preview-traefik",
+	}
+	if err := EnsureTraefik(context.Background(), dc, spec); err != nil {
+		t.Fatalf("EnsureTraefik: %v", err)
 	}
 }
