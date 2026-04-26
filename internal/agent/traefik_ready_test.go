@@ -19,15 +19,6 @@ import (
 	"time"
 )
 
-// fakeTraefikAPI 는 라우터별 응답을 동적으로 분기하는 stub.
-type fakeTraefikAPI struct {
-	mu       atomic.Int64 // request counter (atomic load 가능)
-	handler  func(name string) (status int, body string)
-	requests atomic.Int64 // 누적 요청 수
-	urls     []string
-	urlsMu   func()
-}
-
 func newFakeAPI(handler func(name string) (int, string)) (*httptest.Server, *atomic.Int64) {
 	count := &atomic.Int64{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

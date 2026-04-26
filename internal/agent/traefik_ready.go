@@ -78,10 +78,7 @@ func WaitTraefikRouters(ctx context.Context, baseURL string, names []string, tim
 			return ctx.Err()
 		case <-time.After(interval):
 		}
-		interval = time.Duration(float64(interval) * 1.5)
-		if interval > traefikPollMax {
-			interval = traefikPollMax
-		}
+		interval = min(time.Duration(float64(interval)*1.5), traefikPollMax)
 	}
 }
 

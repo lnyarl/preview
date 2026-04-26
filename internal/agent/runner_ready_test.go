@@ -166,7 +166,7 @@ func TestWaitRoutersDockerfileSingleRouter(t *testing.T) {
 		gotNames[name]++
 		// 즉시 enabled 응답 → 1 회만 폴링.
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"name":%q,"status":"enabled"}`, name)))
+		_, _ = fmt.Fprintf(w, `{"name":%q,"status":"enabled"}`, name)
 	}))
 	defer srv.Close()
 
