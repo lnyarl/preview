@@ -4,8 +4,12 @@
 //   - Envelope 와 메시지 타입 상수 선언
 //   - Phase 1 에서 실제 교환되는 HELLO/WELCOME/PING/PONG DTO
 //   - Phase 2 에서 사용할 메시지 타입 문자열 동결 (구조체는 Phase 2)
+//   - Phase 6: AgentConfigData / TypeAgentConfig / TypeConfigUpdate 제거 (결정 13),
+//     StatusUpdateData.PreviewURLs 추가 (결정 11).
 //
-// 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-6 (프로토콜 타입 상수)
+// 참고: docs/specs/phase-1-agent-registration-and-ws.md §5-6,
+//
+//	docs/specs/phase-6-docker-native.md §4-10.
 package protocol
 
 import (
@@ -25,10 +29,6 @@ const (
 	TypeStatusUpdate = "STATUS_UPDATE"
 	TypeLog          = "LOG"
 	TypeJobTeardown  = "JOB_TEARDOWN"
-	// Phase 4: Hub-managed Agent 빌드 설정 (HELLO 직후 1회 + 변경 시 푸시).
-	// 두 메시지의 페이로드 스키마는 동일하다 (결정 8). 이름만 다르다 — 의도가 다르기 때문.
-	TypeAgentConfig  = "AGENT_CONFIG"
-	TypeConfigUpdate = "CONFIG_UPDATE"
 )
 
 // ProtoVersion 은 HELLO/WELCOME 에 실리는 프로토콜 버전 문자열.
@@ -95,13 +95,14 @@ type JobAssignData struct {
 // StatusUpdateData 는 Agent 가 building → running → done|failed 전이 시
 // Hub 로 보내는 본문. nullable 필드는 포인터로 명시(빈 값 set 과 미설정 구분).
 type StatusUpdateData struct {
-	PreviewID    string  `json:"preview_id"`
-	Status       string  `json:"status"`
-	Message      string  `json:"message,omitempty"`
-	ContainerID  *string `json:"container_id,omitempty"`
-	AgentHost    *string `json:"agent_host,omitempty"`
-	AgentPort    *int    `json:"agent_port,omitempty"`
-	ErrorMessage *string `json:"error_message,omitempty"`
+	PreviewID    string            `json:"preview_id"`
+	Status       string            `json:"status"`
+	Message      string            `json:"message,omitempty"`
+	ContainerID  *string           `json:"container_id,omitempty"`
+	AgentHost    *string           `json:"agent_host,omitempty"`
+	AgentPort    *int              `json:"agent_port,omitempty"`
+	ErrorMessage *string           `json:"error_message,omitempty"`
+	PreviewURLs  map[string]string `json:"preview_urls,omitempty"` // Phase 6: service → URL
 }
 
 // JobTeardownData 는 Hub 가 PR closed 등으로 컨테이너 정리를 요청할 때 송신.

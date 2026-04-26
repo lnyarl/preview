@@ -7,14 +7,13 @@ import (
 )
 
 func TestParseConfigFlags(t *testing.T) {
-	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_ADVERTISE_HOST", "AGENT_REPO_URL"} {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_ADVERTISE_HOST", "AGENT_TRAEFIK_PORT", "AGENT_TRAEFIK_IMAGE"} {
 		t.Setenv(k, "")
 	}
 	cfg, err := ParseConfig([]string{
 		"--hub-url", "ws://localhost:3000/agent/ws",
 		"--token", "agt_xxx",
 		"--advertise-host", "1.2.3.4",
-		"--repo-url", "file:///tmp/x",
 	})
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
@@ -33,7 +32,6 @@ func TestParseConfigFlags(t *testing.T) {
 func TestParseConfigEnvFallback(t *testing.T) {
 	t.Setenv("HUB_URL", "ws://env-host/agent/ws")
 	t.Setenv("HUB_TOKEN", "agt_env")
-	t.Setenv("AGENT_REPO_URL", "file:///tmp/y")
 	cfg, err := ParseConfig(nil)
 	if err != nil {
 		t.Fatalf("ParseConfig: %v", err)
@@ -49,7 +47,6 @@ func TestParseConfigEnvFallback(t *testing.T) {
 func TestParseConfigMissingRequired(t *testing.T) {
 	os.Unsetenv("HUB_URL")
 	os.Unsetenv("HUB_TOKEN")
-	os.Unsetenv("AGENT_REPO_URL")
 	_, err := ParseConfig([]string{})
 	if err == nil {
 		t.Fatal("expected error when HUB_URL/HUB_TOKEN missing")
@@ -60,29 +57,13 @@ func TestParseConfigMissingRequired(t *testing.T) {
 	}
 }
 
-// TestParseConfigMissingRepoURL 는 --repo-url 만 누락된 경우도
-// ErrMissingRequiredFlag 로 식별되어야 함을 검증한다 (F-S2-5).
-func TestParseConfigMissingRepoURL(t *testing.T) {
-	os.Unsetenv("AGENT_REPO_URL")
-	_, err := ParseConfig([]string{
-		"--hub-url", "ws://x",
-		"--token", "agt_y",
-	})
-	if err == nil {
-		t.Fatal("expected error when AGENT_REPO_URL missing")
-	}
-	if !errors.Is(err, ErrMissingRequiredFlag) {
-		t.Fatalf("err=%v, want errors.Is ErrMissingRequiredFlag", err)
-	}
-}
-
 // F-21 (Phase 5): --max-jobs 5 가 cfg.MaxJobs 까지 그대로 전달된다.
 func TestParseConfigMaxJobsFlag(t *testing.T) {
-	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_MAX_JOBS"} {
 		t.Setenv(k, "")
 	}
 	cfg, err := ParseConfig([]string{
-		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--hub-url", "ws://x", "--token", "agt_y",
 		"--max-jobs", "5",
 	})
 	if err != nil {
@@ -95,11 +76,11 @@ func TestParseConfigMaxJobsFlag(t *testing.T) {
 
 // F-23 (Phase 5 결정 11): --max-jobs 10000 → cfg.MaxJobs == 64 로 클램프.
 func TestParseConfigMaxJobsHardCap(t *testing.T) {
-	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_MAX_JOBS"} {
 		t.Setenv(k, "")
 	}
 	cfg, err := ParseConfig([]string{
-		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--hub-url", "ws://x", "--token", "agt_y",
 		"--max-jobs", "10000",
 	})
 	if err != nil {
@@ -112,11 +93,11 @@ func TestParseConfigMaxJobsHardCap(t *testing.T) {
 
 // F-23 보강: 정확히 64 입력은 그대로 통과 (경계값).
 func TestParseConfigMaxJobsAtCap(t *testing.T) {
-	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_MAX_JOBS"} {
 		t.Setenv(k, "")
 	}
 	cfg, err := ParseConfig([]string{
-		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--hub-url", "ws://x", "--token", "agt_y",
 		"--max-jobs", "64",
 	})
 	if err != nil {
@@ -129,11 +110,11 @@ func TestParseConfigMaxJobsAtCap(t *testing.T) {
 
 // F-23 보강: < 1 입력은 1 로 보정.
 func TestParseConfigMaxJobsBelowMin(t *testing.T) {
-	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_REPO_URL", "AGENT_MAX_JOBS"} {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_MAX_JOBS"} {
 		t.Setenv(k, "")
 	}
 	cfg, err := ParseConfig([]string{
-		"--hub-url", "ws://x", "--token", "agt_y", "--repo-url", "file:///tmp/r",
+		"--hub-url", "ws://x", "--token", "agt_y",
 		"--max-jobs", "0",
 	})
 	if err != nil {
@@ -141,5 +122,82 @@ func TestParseConfigMaxJobsBelowMin(t *testing.T) {
 	}
 	if cfg.MaxJobs != 1 {
 		t.Fatalf("MaxJobs=%d want 1", cfg.MaxJobs)
+	}
+}
+
+// Phase 6 결정 14: --traefik-port 가 cfg.TraefikPort 로 전달된다.
+func TestParseConfigTraefikPortFlag(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_TRAEFIK_PORT", "AGENT_TRAEFIK_IMAGE"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--traefik-port", "9090",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikPort != 9090 {
+		t.Fatalf("TraefikPort=%d want 9090", cfg.TraefikPort)
+	}
+}
+
+// Phase 6: AGENT_TRAEFIK_PORT env fallback.
+func TestParseConfigTraefikPortEnv(t *testing.T) {
+	t.Setenv("HUB_URL", "ws://x")
+	t.Setenv("HUB_TOKEN", "agt_y")
+	t.Setenv("AGENT_TRAEFIK_PORT", "7777")
+	t.Setenv("AGENT_TRAEFIK_IMAGE", "")
+	cfg, err := ParseConfig(nil)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikPort != 7777 {
+		t.Fatalf("TraefikPort=%d want 7777", cfg.TraefikPort)
+	}
+}
+
+// Phase 6: --traefik-port default is 8080.
+func TestParseConfigTraefikPortDefault(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_TRAEFIK_PORT", "AGENT_TRAEFIK_IMAGE"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{"--hub-url", "ws://x", "--token", "agt_y"})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikPort != 8080 {
+		t.Fatalf("TraefikPort=%d want 8080 (default)", cfg.TraefikPort)
+	}
+}
+
+// Phase 6: --traefik-image default is "traefik:v3.1".
+func TestParseConfigTraefikImageDefault(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_TRAEFIK_PORT", "AGENT_TRAEFIK_IMAGE"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{"--hub-url", "ws://x", "--token", "agt_y"})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikImage != "traefik:v3.1" {
+		t.Fatalf("TraefikImage=%q want traefik:v3.1", cfg.TraefikImage)
+	}
+}
+
+// Phase 6: --traefik-image flag passthrough.
+func TestParseConfigTraefikImageFlag(t *testing.T) {
+	for _, k := range []string{"HUB_URL", "HUB_TOKEN", "AGENT_TRAEFIK_PORT", "AGENT_TRAEFIK_IMAGE"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := ParseConfig([]string{
+		"--hub-url", "ws://x", "--token", "agt_y",
+		"--traefik-image", "traefik:v2.10",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TraefikImage != "traefik:v2.10" {
+		t.Fatalf("TraefikImage=%q want traefik:v2.10", cfg.TraefikImage)
 	}
 }
