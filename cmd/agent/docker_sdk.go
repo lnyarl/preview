@@ -4,8 +4,13 @@
 //   - Phase 2 범위: ImageBuild, ContainerCreate, ContainerStart, ContainerStop,
 //     ContainerRemove, Ping, ContainerList, ContainerInspect.
 //   - Phase 6 추가: NetworkInspect, NetworkCreate + CreateOptions 확장 필드 처리.
+//   - Phase 7 변경: ContainerCreate 가 CreateOptions.PortBindings 슬라이스를
+//     순회해 nat.PortMap / ExposedPorts 구성. HostPort==0 은 ExposedPorts 만 등록
+//     (expose only). HostIP 분기: ContainerPort==80 → 0.0.0.0(웹 트래픽 외부 노출),
+//     그 외 → 127.0.0.1(loopback, Traefik API 등 보안 민감 포트).
 //
-// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6.
+// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6;
+//       docs/specs/phase-7-traefik-readiness.md §4-1, 결정 7/13.
 package main
 
 import (
@@ -74,21 +79,36 @@ func (s *sdkDockerClient) ImageBuild(ctx context.Context, contextDir string, opt
 }
 
 func (s *sdkDockerClient) ContainerCreate(ctx context.Context, opts agent.CreateOptions) (string, error) {
-	exposedKey := nat.Port(strconv.Itoa(opts.ExposedPort) + "/tcp")
+	// Phase 7: PortBindings 슬라이스 순회 (결정 2/7/13).
 	hostConf := &container.HostConfig{
-		PortBindings: nat.PortMap{
-			exposedKey: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: strconv.Itoa(opts.HostPort)}},
-		},
-		Binds: opts.Volumes, // Phase 6: bind mounts
+		PortBindings: nat.PortMap{},
+		Binds:        opts.Volumes, // Phase 6: bind mounts
+	}
+	exposed := nat.PortSet{}
+	for _, pb := range opts.PortBindings {
+		proto := pb.Protocol
+		if proto == "" {
+			proto = "tcp" // 결정 13: zero value 보존, 어댑터에서 기본 처리.
+		}
+		key := nat.Port(strconv.Itoa(pb.ContainerPort) + "/" + proto)
+		exposed[key] = struct{}{}
+		if pb.HostPort > 0 {
+			// 결정 7: 80 만 외부 노출(0.0.0.0), 그 외(예: Traefik API 8080)는 loopback.
+			bindIP := "127.0.0.1"
+			if pb.ContainerPort == 80 {
+				bindIP = "0.0.0.0"
+			}
+			hostConf.PortBindings[key] = []nat.PortBinding{{
+				HostIP: bindIP, HostPort: strconv.Itoa(pb.HostPort),
+			}}
+		}
 	}
 	cfg := &container.Config{
-		Image:  opts.Image,
-		Labels: opts.Labels,
-		Env:    opts.Env,
-		Cmd:    opts.Cmd, // Phase 6: command args
-		ExposedPorts: nat.PortSet{
-			exposedKey: struct{}{},
-		},
+		Image:        opts.Image,
+		Labels:       opts.Labels,
+		Env:          opts.Env,
+		Cmd:          opts.Cmd, // Phase 6: command args
+		ExposedPorts: exposed,
 	}
 	// Phase 6: connect to specified networks at creation time (first one via NetworkingConfig).
 	netCfg := &network.NetworkingConfig{}

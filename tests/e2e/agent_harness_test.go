@@ -124,7 +124,12 @@ func (f *fakeDockerClient) ContainerInspect(_ context.Context, id string) (agent
 	if !ok {
 		return agent.ContainerInspectResult{}, fmt.Errorf("%w: container %s", agent.ErrDockerNotFound, id)
 	}
-	return agent.ContainerInspectResult{HostPort: c.opts.HostPort}, nil
+	// Phase 7 (M1): PortBindings 슬라이스 첫 항목의 HostPort 를 노출 (빈 슬라이스 안전).
+	res := agent.ContainerInspectResult{}
+	if len(c.opts.PortBindings) > 0 {
+		res.HostPort = c.opts.PortBindings[0].HostPort
+	}
+	return res, nil
 }
 
 func (f *fakeDockerClient) NetworkInspect(_ context.Context, _ string) (agent.NetworkInspectResult, error) {

@@ -263,11 +263,14 @@ func (r *Runner) handleDockerfile(ctx context.Context, pid, worktree string, cfg
 	labels["hub-preview-id"] = pid
 
 	cid, err := r.docker.ContainerCreate(ctx, CreateOptions{
-		Image:       tag,
-		Name:        "preview-" + pid,
-		Labels:      labels,
-		Networks:    []string{traefikNetwork},
-		ExposedPort: svc.Port,
+		Image:    tag,
+		Name:     "preview-" + pid,
+		Labels:   labels,
+		Networks: []string{traefikNetwork},
+		// Phase 7: 외부 노출 X (path-prefix 라우팅) — HostPort=0 expose only.
+		PortBindings: []PortBinding{
+			{ContainerPort: svc.Port, HostPort: 0},
+		},
 	})
 	if err != nil {
 		return "", r.fail(ctx, pid, "container_create", err)

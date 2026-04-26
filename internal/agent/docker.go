@@ -3,10 +3,14 @@
 //   - Phase 2 범위: ImageBuild / ContainerCreate / ContainerStart / ContainerStop /
 //     ContainerRemove / Ping. ContainerInspect 는 build 결과 ExposedPort 추출용.
 //   - Phase 6 추가: NetworkInspect / NetworkCreate (traefik.go 사용).
+//   - Phase 7 변경: CreateOptions 의 단일 HostPort/ExposedPort 두 필드를 제거하고
+//     PortBindings []PortBinding 슬라이스로 일원화 (결정 2). Traefik 의 80+8080
+//     2 포트 바인딩 등 multi-port 케이스를 지원.
 //   - SDK 어댑터(NewSDKDockerClient) 는 cmd/agent 가 wire 한다 (NF-Depguard-2:
 //     internal/agent 패키지는 docker/docker/client 직접 import 금지, cmd/agent 만 허용).
 //
-// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6.
+// 참고: docs/specs/phase-2-webhook-dispatch-proxy.md §5-1, 결정 6;
+//       docs/specs/phase-7-traefik-readiness.md §4-1, 결정 2/13.
 package agent
 
 import (
@@ -25,17 +29,30 @@ type BuildOptions struct {
 	Dockerfile string // 기본 "Dockerfile"
 }
 
+// PortBinding 은 컨테이너 포트 → 호스트 포트 매핑 1 건 (Phase 7 결정 2/13).
+//   - ContainerPort: 컨테이너 내부 포트 (1..65535).
+//   - HostPort: 호스트 바인딩 포트. 0 이면 expose only(외부 미노출),
+//     SDK 어댑터가 ExposedPorts 에만 등록하고 PortMap 에는 추가하지 않는다.
+//   - Protocol: 빈 문자열이면 SDK 어댑터가 "tcp" 로 기본 처리 (결정 13).
+type PortBinding struct {
+	ContainerPort int
+	HostPort      int
+	Protocol      string
+}
+
 // CreateOptions 는 ContainerCreate 호출에 필요한 옵션.
+//
+// Phase 7: 단일 HostPort/ExposedPort 두 필드는 PortBindings 슬라이스로 통합되었다.
+// PortBindings 가 비어있으면 SDK 어댑터는 nat.PortMap / ExposedPorts 모두 비운다.
 type CreateOptions struct {
-	Image       string
-	Name        string            // Phase 6: 컨테이너 이름 (예: "preview-traefik")
-	Labels      map[string]string
-	HostPort    int               // 외부 노출 포트
-	ExposedPort int               // 컨테이너 내부 포트
-	Env         []string
-	Networks    []string          // Phase 6: 연결할 Docker 네트워크 이름 목록
-	Volumes     []string          // Phase 6: bind mounts "host:container[:opts]"
-	Cmd         []string          // Phase 6: 컨테이너 명령 인자 (entrypoint 오버라이드)
+	Image        string
+	Name         string            // Phase 6: 컨테이너 이름 (예: "preview-traefik")
+	Labels       map[string]string
+	PortBindings []PortBinding     // Phase 7: 다중 포트 바인딩 (결정 2)
+	Env          []string
+	Networks     []string          // Phase 6: 연결할 Docker 네트워크 이름 목록
+	Volumes      []string          // Phase 6: bind mounts "host:container[:opts]"
+	Cmd          []string          // Phase 6: 컨테이너 명령 인자 (entrypoint 오버라이드)
 }
 
 // RemoveOptions 는 ContainerRemove 옵션.

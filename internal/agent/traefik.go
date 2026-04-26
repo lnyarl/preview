@@ -82,15 +82,16 @@ func EnsureTraefik(ctx context.Context, dc DockerClient, spec TraefikSpec) error
 		return fmt.Errorf("ensure_traefik: inspect: %w", err)
 	}
 
-	// 컨테이너 생성.
+	// 컨테이너 생성. Phase 7: PortBindings 슬라이스로 통합 (결정 2).
 	id, err := dc.ContainerCreate(ctx, CreateOptions{
-		Image:       spec.Image,
-		Name:        spec.Container,
-		Labels:      map[string]string{traefikSpecLabel: hash},
-		HostPort:    spec.HostPort,
-		ExposedPort: 80,
-		Networks:    []string{spec.Network},
-		Volumes:     []string{"/var/run/docker.sock:/var/run/docker.sock:ro"},
+		Image:  spec.Image,
+		Name:   spec.Container,
+		Labels: map[string]string{traefikSpecLabel: hash},
+		PortBindings: []PortBinding{
+			{ContainerPort: 80, HostPort: spec.HostPort},
+		},
+		Networks: []string{spec.Network},
+		Volumes:  []string{"/var/run/docker.sock:/var/run/docker.sock:ro"},
 		Cmd: []string{
 			"--providers.docker=true",
 			"--providers.docker.exposedbydefault=false",
