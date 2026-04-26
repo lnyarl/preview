@@ -98,14 +98,28 @@ func runStart(args []string) error {
 	runner.SetRouterReadyTimeout(cfg.RouterReadyTimeout)
 	c.SetRunner(runner)
 
-	// Phase 5: 다중 Job 슬롯 + READY 재전송 의존 주입.
-	runner.SetReadySender(c)
-	runner.SetMaxJobs(cfg.MaxJobs)
-
+	// Phase 8: orphan cleanup 은 READY 송신 전에 수행 (race 방지, 결정 4).
 	// Phase 3: orphan container restore (결정 11 / §4-7-1).
-	if _, rerr := agent.RestoreOrphans(ctx, docker, runner, cfg.AdvertiseHost, logger); rerr != nil {
+	activeIDs, rerr := agent.RestoreOrphans(ctx, docker, runner, cfg.AdvertiseHost, logger)
+	if rerr != nil {
 		logger.Warn("agent_orphan_restore_failed", "err", rerr.Error())
 	}
+	// Phase 8 항목 1: worktree orphan 정리 (이미 구현된 PruneStaleWorktrees wiring).
+	if n, perr := cache.PruneStaleWorktrees(ctx, activeIDs); perr != nil {
+		logger.Warn("agent_prune_stale_worktrees_failed", "pruned", n, "err", perr.Error())
+	} else if n > 0 {
+		logger.Info("agent_prune_stale_worktrees", "pruned", n)
+	}
+	// Phase 8 항목 2: compose 프로젝트 orphan 정리. cmd 인자는 결정 2 옵션 (b) 의 getter.
+	if n, perr := agent.PruneComposeOrphans(ctx, runner.Cmd(), runner, logger); perr != nil {
+		logger.Warn("agent_prune_compose_orphans_failed", "pruned", n, "err", perr.Error())
+	} else if n > 0 {
+		logger.Info("agent_prune_compose_orphans", "pruned", n)
+	}
+
+	// Phase 5: 다중 Job 슬롯 + READY 재전송 의존 주입 (cleanup 후에 wire — 결정 4).
+	runner.SetReadySender(c)
+	runner.SetMaxJobs(cfg.MaxJobs)
 
 	// Phase 3: SIGTERM → runner.Pause + in-flight drain (§5-13).
 	go func() {
