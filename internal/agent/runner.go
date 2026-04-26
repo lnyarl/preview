@@ -83,6 +83,11 @@ func (r *Runner) SetTraefikPort(port int) {
 	}
 }
 
+// Cmd 는 Runner 가 내부에서 docker/git 명령 실행에 사용하는 CmdRunner 를
+// 외부 호출자(예: main.go 의 PruneComposeOrphans wiring) 에 노출한다.
+// Phase 8: orphan cleanup 의 cmd 주입 경로 (결정 2 옵션 (b)).
+func (r *Runner) Cmd() CmdRunner { return r.cmd }
+
 // RunningPreviewIDs 는 jobs 맵에 있는 previewID 슬라이스 (HELLO.RunningPreviews 채움용).
 func (r *Runner) RunningPreviewIDs() []string {
 	out := []string{}
