@@ -271,6 +271,8 @@ func startAgent(t *testing.T, wsURL, agentToken, _ string) *agentHarness {
 	client := agent.NewClient(cfg, logger)
 	// cmd=nil → execRunner{} (compose は使わないので no-op 相当).
 	runner := agent.NewRunner(docker, multiCache, nil, client, cfg.AdvertiseHost, logger)
+	runner.SetReadySender(client)
+	runner.SetMaxJobs(cfg.MaxJobs)
 	client.SetRunner(runner)
 
 	ctx, cancel := context.WithCancel(context.Background())
