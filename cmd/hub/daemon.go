@@ -8,7 +8,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -45,11 +44,9 @@ func runDaemon(args []string) error {
 	}
 	logger := hub.NewLogger(cfg.LogLevel)
 
-	// Phase 2: 필수 설정(GITHUB_WEBHOOK_SECRET) 부재 시 fail-fast (NF-Security-3).
+	// 필수 설정 부재 시 fail-fast (NF-Security-3).
 	if err := cfg.Validate(); err != nil {
-		if errors.Is(err, hub.ErrWebhookSecretMissing) {
-			logger.Error("config_invalid", "err", err.Error())
-		}
+		logger.Error("config_invalid", "err", err.Error())
 		return err
 	}
 

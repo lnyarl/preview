@@ -357,6 +357,11 @@ func TestConfigValidateMissingSecret(t *testing.T) {
 		t.Fatalf("err=%v want ErrWebhookSecretMissing", err)
 	}
 	cfg.WebhookSecret = "x"
+	// ADMIN_PASSWORD 도 필수 — 없으면 ErrAdminPasswordMissing.
+	if err := cfg.Validate(); err != ErrAdminPasswordMissing {
+		t.Fatalf("err=%v want ErrAdminPasswordMissing", err)
+	}
+	cfg.AdminPassword = "secret"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("err=%v want nil", err)
 	}

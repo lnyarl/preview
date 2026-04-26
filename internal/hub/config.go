@@ -19,6 +19,10 @@ import (
 // ErrWebhookSecretMissing 은 GITHUB_WEBHOOK_SECRET 이 비어있을 때 반환된다(NF-Security-3).
 var ErrWebhookSecretMissing = errors.New("config: GITHUB_WEBHOOK_SECRET required for webhook")
 
+// ErrAdminPasswordMissing 은 ADMIN_PASSWORD 가 비어있을 때 반환된다.
+// 빈 값이면 /admin/* 가 무인증으로 열리므로 데몬 기동을 차단한다.
+var ErrAdminPasswordMissing = errors.New("config: ADMIN_PASSWORD required — /admin/* would be open without it")
+
 // Config 는 Hub 기동에 필요한 런타임 설정.
 type Config struct {
 	Addr              string        // 바인드 주소. :3000 기본
@@ -29,7 +33,7 @@ type Config struct {
 	PreviewBaseDomain string        // reverse proxy 호스트 매칭 base. Step 3 에서 사용.
 	ReconcileInterval   time.Duration // reconciler 주기 (기본 60s).
 	StaleAssignedAfter time.Duration // assigned 임계 (기본 5m).
-	AdminPassword      string        // Phase 3: /admin/* Basic Auth 비밀번호. 빈 값 = 인증 disable + WARN.
+	AdminPassword      string        // /admin/* Basic Auth 비밀번호. 빈 값 = 데몬 기동 거부 (Validate 참조).
 	DevAgentToken      string        // 설정 시 시작 시 "dev-agent" 자동 등록 (개발 전용).
 	AgentDownloadURL   string        // Agent 바이너리 다운로드 base URL. 설정 시 토큰 페이지에 다운로드 링크 표시.
 }
@@ -53,10 +57,13 @@ func DefaultConfig() Config {
 }
 
 // Validate 는 Hub 데몬 기동 직전 필수 설정의 존재를 검증한다.
-// 마이그레이션/CLI 서브커맨드는 이 검증을 우회할 수 있다(데몬만 secret 필요).
+// 마이그레이션/CLI 서브커맨드는 이 검증을 우회할 수 있다(데몬만 검증 필요).
 func (c Config) Validate() error {
 	if c.WebhookSecret == "" {
 		return ErrWebhookSecretMissing
+	}
+	if c.AdminPassword == "" {
+		return ErrAdminPasswordMissing
 	}
 	return nil
 }
