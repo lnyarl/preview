@@ -124,11 +124,7 @@ func runDaemon(args []string) error {
 		logger.Info("dispatcher_paused")
 	}()
 
-	// Phase 2 Step 3: ProxyMiddleware + Reconciler.
-	pm := hub.NewProxyMiddleware(previewStore, cfg.PreviewBaseDomain, logger)
 	webhook.SetTeardownSender(jobSender)
-	webhook.SetCacheNotifier(pm)
-	statusUpdater.SetCacheNotifier(pm)
 
 	reconciler := hub.NewReconciler(previewStore, reg, logger)
 	reconciler.Start(ctx, cfg.ReconcileInterval, cfg.StaleAssignedAfter)
@@ -137,7 +133,7 @@ func runDaemon(args []string) error {
 		"stale_assigned_after", cfg.StaleAssignedAfter.String(),
 	)
 
-	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, pm, adminUI)
+	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, adminUI)
 	return srv.Run(ctx)
 }
 

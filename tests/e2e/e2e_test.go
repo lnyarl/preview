@@ -28,7 +28,7 @@ const (
 
 // TestHealth 는 /health 엔드포인트가 200 OK 를 반환하는지 확인한다 (smoke).
 func TestHealth(t *testing.T) {
-	h := startHub(t, testSecret, "")
+	h := startHub(t, testSecret)
 	resp, err := http.Get(h.URL + "/health")
 	if err != nil {
 		t.Fatalf("GET /health: %v", err)
@@ -49,7 +49,7 @@ func TestHealth(t *testing.T) {
 // TestAgentConnectsAndGoesOnline 은 Agent 가 WS 연결 후 status='online' 으로
 // 전이되는지 확인한다.
 func TestAgentConnectsAndGoesOnline(t *testing.T) {
-	h := startHub(t, testSecret, "")
+	h := startHub(t, testSecret)
 	tok := h.createAgent(t, "e2e-agent")
 	startAgent(t, h.WSURL, tok, "file:///nonexistent")
 	h.pollAgentStatus(t, "e2e-agent", "online", 5*time.Second)
@@ -58,7 +58,7 @@ func TestAgentConnectsAndGoesOnline(t *testing.T) {
 // TestWebhookCreatesPreview 는 Agent 없이 webhook(opened) 만으로 preview row 가
 // 'queued' 상태로 생성되는지 확인한다 (Hub-only 경로).
 func TestWebhookCreatesPreview(t *testing.T) {
-	h := startHub(t, testSecret, "")
+	h := startHub(t, testSecret)
 	h.sendWebhook(t, "opened", 1, "aaa111", "feat/test", testRepo)
 	h.pollPreviewStatus(t, 1, testRepo, "queued", 5*time.Second)
 }
@@ -69,7 +69,7 @@ func TestWebhookCreatesPreview(t *testing.T) {
 // 디스패치 모델은 Pull 방식: Agent 의 READY 만이 dispatcher.OnReady 를 트리거한다.
 // 따라서 큐에 작업이 있는 상태에서 Agent 가 처음 READY 를 보내야 매칭이 일어난다.
 func TestFullJobFlow(t *testing.T) {
-	h := startHub(t, testSecret, "")
+	h := startHub(t, testSecret)
 	tok := h.createAgent(t, "flow-agent")
 
 	h.sendWebhook(t, "opened", 2, "bbb222", "feat/flow", testRepo)
@@ -95,7 +95,7 @@ func TestFullJobFlow(t *testing.T) {
 // preview 가 'done' 으로 전이되는지 확인한다. TestFullJobFlow 와 동일 흐름으로
 // running 까지 도달시킨 뒤 closed webhook 으로 정리한다.
 func TestJobTeardown(t *testing.T) {
-	h := startHub(t, testSecret, "")
+	h := startHub(t, testSecret)
 	tok := h.createAgent(t, "teardown-agent")
 
 	h.sendWebhook(t, "opened", 3, "ccc333", "feat/td", testRepo)

@@ -30,14 +30,14 @@ type Server struct {
 
 // NewServer 는 구성 요소를 조립해 Server 를 반환한다.
 // admin/ws/webhook 핸들러가 공유 레지스트리와 mux 를 사용한다.
-// proxy 가 nil 이 아니면 mux 를 ProxyMiddleware 로 감싸 호스트 헤더 기반 라우팅을 활성화.
 //
 // Phase 3: dual-mux 패턴 (§5-4 / 결정 4).
 //   mainMux:  /health, /webhooks/*, /agent/ws, /admin/ → BasicAuthMiddleware(adminMux)
 //   adminMux: /admin/agents*, /admin/previews*, /admin/agents/token, etc.
 //
 // adminUI 가 nil 이면 SSR 라우트 등록을 건너뛴다 (테스트 호환).
-func NewServer(cfg Config, admin *AdminHandler, wsh *WSHandler, webhook *WebhookHandler, reg *ConnRegistry, logger *slog.Logger, proxy *ProxyMiddleware, adminUI *AdminUIHandler) *Server {
+// Phase 6 (결정 12): ProxyMiddleware 제거 — preview 접근은 Traefik 직접 URL 로.
+func NewServer(cfg Config, admin *AdminHandler, wsh *WSHandler, webhook *WebhookHandler, reg *ConnRegistry, logger *slog.Logger, adminUI *AdminUIHandler) *Server {
 	adminMux := http.NewServeMux()
 	admin.RegisterAdminOnly(adminMux)
 	if webhook != nil {
@@ -62,17 +62,13 @@ func NewServer(cfg Config, admin *AdminHandler, wsh *WSHandler, webhook *Webhook
 	// /admin (no slash) 도 같은 게이트로 처리하기 위해 별도 등록.
 	mainMux.Handle("/admin", BasicAuthMiddleware(adminMux, cfg.AdminPassword, logger))
 
-	var handler http.Handler = mainMux
-	if proxy != nil {
-		handler = proxy.Wrap(mainMux)
-	}
 	return &Server{
 		cfg:      cfg,
 		registry: reg,
 		logger:   logger,
 		http: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           handler,
+			Handler:           mainMux,
 			ReadHeaderTimeout: 10 * time.Second,
 		},
 	}

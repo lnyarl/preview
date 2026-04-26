@@ -2,7 +2,7 @@
 
 // 이 파일의 책임:
 //   - Hub 를 httptest.Server 위에 in-process 기동하는 헬퍼.
-//   - daemon.go 의 wiring 을 그대로 복제 (ProxyMiddleware 만 제외 — host 매칭 불필요).
+//   - daemon.go 의 wiring 을 그대로 복제 (Phase 6: ProxyMiddleware 제거됨).
 //   - 인메모리 SQLite 는 동일 DSN 으로 sql.DB 와 migrator 가 두 번 열어야 하므로,
 //     파일 기반 임시 DB 를 t.TempDir() 아래에 두고 마이그레이션을 적용한다.
 //   - 공용 HTTP 헬퍼(createAgent / saveRunConfig / sendWebhook / poll*) 제공.
@@ -43,8 +43,7 @@ type hubHarness struct {
 
 // startHub 은 daemon.go 와 동일한 wiring 으로 Hub 를 in-process 기동한다.
 // webhookSecret 은 /webhooks/github HMAC 비교에 사용되며 빈 값 금지 (cfg.Validate).
-// repoURL 은 PreviewRepoURL — 빈 값이면 webhook 의 repo_full_name 을 그대로 사용.
-func startHub(t *testing.T, webhookSecret, repoURL string) *hubHarness {
+func startHub(t *testing.T, webhookSecret string) *hubHarness {
 	t.Helper()
 
 	// 파일 기반 임시 DB. 인메모리(":memory:") 는 동일 DSN 으로 두 번 Open 하면
@@ -92,14 +91,8 @@ func startHub(t *testing.T, webhookSecret, repoURL string) *hubHarness {
 	webhook.SetUI(adminUI)
 	ws.SetPreviewStore(previewStore)
 
-	resolveRepo := func(repoFullName string) string {
-		if repoURL != "" {
-			return repoURL
-		}
-		return repoFullName
-	}
-	jobSender := hub.NewWSJobSender(reg, resolveRepo)
-	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, resolveRepo, logger)
+	jobSender := hub.NewWSJobSender(reg)
+	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, logger)
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)
@@ -117,12 +110,11 @@ func startHub(t *testing.T, webhookSecret, repoURL string) *hubHarness {
 		LogLevel:           "debug",
 		WebhookSecret:      webhookSecret,
 		PreviewBaseDomain:  "localhost",
-		PreviewRepoURL:     repoURL,
 		ReconcileInterval:  100 * time.Millisecond,
 		StaleAssignedAfter: 1 * time.Hour,
 		AdminPassword:      "", // 인증 비활성.
 	}
-	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, nil, adminUI)
+	srv := hub.NewServer(cfg, admin, ws, webhook, reg, logger, adminUI)
 
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)

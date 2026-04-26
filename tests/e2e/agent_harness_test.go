@@ -252,7 +252,6 @@ func startAgent(t *testing.T, wsURL, agentToken, repoURL string) *agentHarness {
 	cfg := agent.Config{
 		HubURL:        wsURL,
 		Token:         agentToken,
-		Labels:        []string{},
 		AdvertiseHost: "127.0.0.1",
 		LogLevel:      "debug",
 		WorkDir:       t.TempDir(),

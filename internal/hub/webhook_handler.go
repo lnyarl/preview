@@ -62,21 +62,15 @@ type TeardownSender interface {
 	SendTeardown(ctx context.Context, agentID, previewID string) error
 }
 
-// PreviewCacheNotifier 는 preview 상태 변경 시 proxy 캐시를 무효화하는 인터페이스.
-type PreviewCacheNotifier interface {
-	Invalidate(previewID string)
-}
-
 // WebhookHandler 는 /webhooks/github 와 /admin/previews 를 처리한다.
-// TeardownSender / CacheNotifier 는 옵션 — nil 일 때는 동작 자체는 정상이고
-// JOB_TEARDOWN 송신/캐시 무효화만 스킵한다 (Step 1 컴파일 호환성).
+// TeardownSender 는 옵션 — nil 일 때 JOB_TEARDOWN 송신만 스킵한다.
+// Phase 6 (결정 12): CacheNotifier/ProxyMiddleware 제거.
 type WebhookHandler struct {
 	Store          store.PreviewStore
 	WebhookSecret  []byte
 	Logger         *slog.Logger
-	TeardownSender TeardownSender       // optional, nil-safe
-	CacheNotifier  PreviewCacheNotifier // optional, nil-safe
-	UI             *AdminUIHandler      // Phase 3: SSR 분기 (옵션, 결정 6)
+	TeardownSender TeardownSender  // optional, nil-safe
+	UI             *AdminUIHandler // Phase 3: SSR 분기 (옵션, 결정 6)
 	now            func() time.Time
 }
 
@@ -103,9 +97,6 @@ func (h *WebhookHandler) Register(mux *http.ServeMux) {
 
 // SetTeardownSender 는 JOB_TEARDOWN 송신자를 주입한다.
 func (h *WebhookHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender = s }
-
-// SetCacheNotifier 는 proxy 캐시 무효화 콜백을 주입한다.
-func (h *WebhookHandler) SetCacheNotifier(n PreviewCacheNotifier) { h.CacheNotifier = n }
 
 // PreviewView 는 /admin/previews 응답 DTO. nullable 필드는 *string/*int 로 명시.
 //
@@ -311,11 +302,6 @@ func (h *WebhookHandler) handleClose(w http.ResponseWriter, ctx context.Context,
 		}
 	}
 
-	// 프록시 캐시 무효화.
-	if h.CacheNotifier != nil {
-		h.CacheNotifier.Invalidate(existing.ID)
-	}
-
 	h.Logger.Info("preview_webhook_processed",
 		"action", "closed",
 		"preview_id", existing.ID,
@@ -359,9 +345,6 @@ func (h *WebhookHandler) deletePreview(w http.ResponseWriter, r *http.Request) {
 			h.Logger.Warn("teardown_send_failed", "preview_id", id,
 				"agent_id", *p.AssignedAgentID, "err", err.Error())
 		}
-	}
-	if h.CacheNotifier != nil {
-		h.CacheNotifier.Invalidate(id)
 	}
 	h.Logger.Info("preview_manual_teardown", "preview_id", id)
 	writeJSON(w, http.StatusAccepted, map[string]any{"preview_id": id, "status": "teardown"})

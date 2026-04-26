@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -99,9 +98,8 @@ func TestWebhookDeletePreviewNotFound(t *testing.T) {
 
 func TestWebhookSettersNilSafe(t *testing.T) {
 	h := NewWebhookHandler(newFakeStore(), testSecret, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	// SetTeardownSender / SetCacheNotifier 호출 후 nil-safe 확인 (패닉 없어야 함).
+	// SetTeardownSender 호출 후 nil-safe 확인 (패닉 없어야 함).
 	h.SetTeardownSender(nil)
-	h.SetCacheNotifier(nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -213,48 +211,6 @@ func TestStatusUpdaterInvalidPayload(t *testing.T) {
 	}
 }
 
-func TestStatusUpdaterCacheNotifierCalledOnNonRunning(t *testing.T) {
-	fs := newStatusFakeStore()
-	fs.put("p3", "running")
-
-	invalidated := ""
-	su := NewStatusUpdater(fs, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	su.SetCacheNotifier(&testNotifier{onInvalidate: func(id string) { invalidated = id }})
-
-	if err := su.OnStatusUpdate(context.Background(), "a", protocol.StatusUpdateData{
-		PreviewID: "p3",
-		Status:    "done",
-	}); err != nil {
-		t.Fatalf("OnStatusUpdate: %v", err)
-	}
-	if invalidated != "p3" {
-		t.Errorf("Invalidate called with %q want p3", invalidated)
-	}
-}
-
-func TestStatusUpdaterCacheNotifierNotCalledOnRunning(t *testing.T) {
-	fs := newStatusFakeStore()
-	fs.put("p4", "building")
-
-	called := false
-	su := NewStatusUpdater(fs, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	su.SetCacheNotifier(&testNotifier{onInvalidate: func(_ string) { called = true }})
-
-	_ = su.OnStatusUpdate(context.Background(), "a", protocol.StatusUpdateData{
-		PreviewID: "p4",
-		Status:    "running",
-	})
-	if called {
-		t.Error("Invalidate should NOT be called when transitioning to running")
-	}
-}
-
-type testNotifier struct {
-	onInvalidate func(id string)
-}
-
-func (n *testNotifier) Invalidate(id string) { n.onInvalidate(id) }
-
 // ---------------------------------------------------------------------------
 // ConnRegistry.OnlineAgentIDs
 // ---------------------------------------------------------------------------
@@ -278,41 +234,6 @@ func TestConnRegistryOnlineAgentIDs(t *testing.T) {
 	}
 	if !ids["agent-A"] || !ids["agent-B"] {
 		t.Errorf("unexpected ids: %v", ids)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// ProxyMiddleware: base domain mismatch fallthrough, not-found
-// ---------------------------------------------------------------------------
-
-func TestProxyBaseDomainMismatch(t *testing.T) {
-	// baseDomain="example.com" but request uses "localhost" → fallthrough.
-	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(299)
-	})
-	pm := NewProxyMiddleware(&fakeProxyStore{}, "example.com", slog.Default())
-	h := pm.Wrap(inner)
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "pr-1.preview.localhost:3000"
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	if w.Code != 299 {
-		t.Errorf("want fallthrough 299, got %d", w.Code)
-	}
-}
-
-func TestProxyPreviewNotFound(t *testing.T) {
-	fs := &fakeProxyStore{preview: nil}
-	pm := NewProxyMiddleware(fs, "localhost", slog.Default())
-	h := pm.Wrap(http.NotFoundHandler())
-
-	req := httptest.NewRequest("GET", "/", nil)
-	req.Host = "pr-55.preview.localhost"
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	if w.Code != 404 {
-		t.Errorf("want 404, got %d", w.Code)
 	}
 }
 
