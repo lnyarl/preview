@@ -20,14 +20,23 @@ import (
 // MultiRepoCache 는 repoURL → *RepoCache 의 thin wrapper 다.
 // RepoCache 는 무변경 — 모든 로직은 대응하는 RepoCache 메서드에 위임한다.
 type MultiRepoCache struct {
-	workDir string
-	logger  *slog.Logger
+	workDir   string
+	logger    *slog.Logger
+	cmdRunner CmdRunner // nil = execRunner{}. SetCmdRunner 로 테스트에서 주입 가능.
 
 	mu      sync.Mutex
 	repos   map[string]*RepoCache // key: raw repoURL
 
 	prefetchMu sync.Mutex
 	prefetched map[string]struct{} // repoURLs with ticker running
+}
+
+// SetCmdRunner 는 이후 생성되는 모든 RepoCache 에 주입할 CmdRunner 를 설정한다.
+// 이미 생성된 RepoCache 에는 영향을 주지 않는다. 주로 테스트용.
+func (m *MultiRepoCache) SetCmdRunner(r CmdRunner) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cmdRunner = r
 }
 
 // NewMultiRepoCache 는 빈 MultiRepoCache 를 반환한다. logger 가 nil 이면 silent.
@@ -44,6 +53,7 @@ func NewMultiRepoCache(workDir string, logger *slog.Logger) *MultiRepoCache {
 }
 
 // getOrCreate 는 repoURL 에 대응하는 *RepoCache 를 반환한다. 없으면 생성.
+// cmdRunner 가 설정되어 있으면 새로 생성한 RepoCache 에 주입한다.
 func (m *MultiRepoCache) getOrCreate(repoURL string) *RepoCache {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,6 +61,9 @@ func (m *MultiRepoCache) getOrCreate(repoURL string) *RepoCache {
 		return rc
 	}
 	rc := NewRepoCache(m.workDir, repoURL, m.logger)
+	if m.cmdRunner != nil {
+		rc.SetRunner(m.cmdRunner)
+	}
 	m.repos[repoURL] = rc
 	return rc
 }

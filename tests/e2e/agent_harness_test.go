@@ -195,7 +195,14 @@ func (fakeCmdRunner) Run(_ context.Context, name string, args ...string) error {
 					if path == "" {
 						return nil
 					}
-					return os.MkdirAll(path, 0o755)
+					if err := os.MkdirAll(path, 0o755); err != nil {
+						return err
+					}
+					// Phase 6: .preview.yml + Dockerfile を生成して runner が処理できるようにする.
+					previewYml := "services:\n  app:\n    port: 80\n    path: /app\n"
+					_ = os.WriteFile(filepath.Join(path, ".preview.yml"), []byte(previewYml), 0o644)
+					_ = os.WriteFile(filepath.Join(path, "Dockerfile"), []byte("FROM nginx:alpine\n"), 0o644)
+					return nil
 				case "remove":
 					// `worktree remove --force <path>`.
 					var path string
@@ -235,14 +242,11 @@ type agentHarness struct {
 	cancel context.CancelFunc
 }
 
-// startAgent 는 실제 agent.Client + agent.Runner + RepoCache 를
+// startAgent 는 실제 agent.Client + agent.Runner + MultiRepoCache 를
 // fake docker/cmd runner 와 함께 기동한다. ctx 취소는 t.Cleanup 으로 보장.
-func startAgent(t *testing.T, wsURL, agentToken, repoURL string) *agentHarness {
+// Phase 6: MultiRepoCache 로 교체; repoURL 파라미터 제거 — msg.RepoURL 을 동적으로 수신.
+func startAgent(t *testing.T, wsURL, agentToken, _ string) *agentHarness {
 	t.Helper()
-	if repoURL == "" {
-		// repo 가 비어있으면 cache.Ensure 가 빈 URL 로 clone — 안전하게 placeholder 부여.
-		repoURL = "file:///e2e-test-placeholder"
-	}
 	var logOut io.Writer = io.Discard
 	if testing.Verbose() {
 		logOut = testWriter{t: t, prefix: "[agent] "}
@@ -258,13 +262,15 @@ func startAgent(t *testing.T, wsURL, agentToken, repoURL string) *agentHarness {
 		MaxJobs:       1,
 	}
 
-	cache := agent.NewRepoCache(cfg.WorkDir, repoURL, logger)
-	cache.SetRunner(fakeCmdRunner{})
+	// Phase 6: MultiRepoCache — SetCmdRunner で git 操作を fake に差し替え.
+	multiCache := agent.NewMultiRepoCache(cfg.WorkDir, logger)
+	multiCache.SetCmdRunner(fakeCmdRunner{})
 
 	docker := newFakeDockerClient()
 
 	client := agent.NewClient(cfg, logger)
-	runner := agent.NewRunner(docker, cache, client, cfg.AdvertiseHost, logger)
+	// cmd=nil → execRunner{} (compose は使わないので no-op 相当).
+	runner := agent.NewRunner(docker, multiCache, nil, client, cfg.AdvertiseHost, logger)
 	client.SetRunner(runner)
 
 	ctx, cancel := context.WithCancel(context.Background())
