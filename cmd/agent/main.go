@@ -93,6 +93,9 @@ func runStart(args []string) error {
 	c := agent.NewClient(cfg, logger)
 	runner := agent.NewRunner(docker, cache, nil, c, cfg.AdvertiseHost, logger)
 	runner.SetTraefikPort(cfg.TraefikPort)
+	// Phase 7: Traefik readiness probe wiring (0 = 비활성).
+	runner.SetTraefikAPIPort(cfg.TraefikAPIPort)
+	runner.SetRouterReadyTimeout(cfg.RouterReadyTimeout)
 	c.SetRunner(runner)
 
 	// Phase 5: 다중 Job 슬롯 + READY 재전송 의존 주입.

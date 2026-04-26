@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lnyarl/preview/internal/protocol"
 )
@@ -49,15 +50,17 @@ type runningJob struct {
 
 // Runner 는 JOB_ASSIGN/TEARDOWN 처리 로직.
 type Runner struct {
-	docker      DockerClient
-	cache       *MultiRepoCache
-	cmd         CmdRunner  // docker compose 명령 실행용 (Phase 6).
-	hub         HubSender
-	advHost     string
-	traefikPort int        // Traefik 호스트 포트 (Phase 6, default 8080).
-	logger      *slog.Logger
-	ready       ReadySender // Phase 5: READY 송신 의존 (nil 허용 = no-op).
-	maxJobs     int         // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
+	docker             DockerClient
+	cache              *MultiRepoCache
+	cmd                CmdRunner     // docker compose 명령 실행용 (Phase 6).
+	hub                HubSender
+	advHost            string
+	traefikPort        int           // Traefik 웹 호스트 포트 (Phase 6, default 8080).
+	traefikAPIPort     int           // Phase 7: Traefik API 호스트 포트 (default 9080, 0=비활성).
+	routerReadyTimeout time.Duration // Phase 7: WaitTraefikRouters timeout (default 30s, 0=비활성).
+	logger             *slog.Logger
+	ready              ReadySender   // Phase 5: READY 송신 의존 (nil 허용 = no-op).
+	maxJobs            int           // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
 
 	jobs     sync.Map    // previewID -> *runningJob
 	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
@@ -192,10 +195,13 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return err
 	}
 
-	// (5) preview URLs.
+	// (5) Phase 7: Traefik 라우터 활성화 대기 (best-effort, 결정 4/11).
+	r.waitRouters(ctx, pid, cfg, mode)
+
+	// (6) preview URLs.
 	urls := PreviewURLs(pid, cfg, r.advHost, r.traefikPort)
 
-	// (6) jobs 맵 등록.
+	// (7) jobs 맵 등록.
 	r.jobs.Store(pid, &runningJob{
 		previewID:    pid,
 		containerID:  containerID,
@@ -207,7 +213,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		composeFile:  composefile,
 	})
 
-	// (7) running STATUS_UPDATE.
+	// (8) running STATUS_UPDATE.
 	host := r.advHost
 	port := r.traefikPort
 	var cidPtr *string

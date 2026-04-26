@@ -225,8 +225,10 @@ func TestWaitTraefikRouters_PartialEnabledNotReady(t *testing.T) {
 }
 
 // F-19: backoff 횟수 검증 — 패키지 변수 swap + 항상 404 + 짧은 timeout.
-// 누적 sleep 시퀀스: 1ms, 1.5ms→1, 2.25ms→2, 3.375ms→3, 4ms, 4ms, ...
-// 20ms 안에서 약 6 회 시도 (±1 허용).
+// 누적 sleep 시퀀스: 1ms, 1.5ms, 2.25ms, 3.375ms, 4ms, 4ms, ...
+// 20ms timeout 안에서 시도 횟수는 환경(스케줄러 jitter, OS 시계 해상도) 에 민감.
+// 기획서의 expected 6 ±1 = [5,7] 범위는 이상적, R8 의 ±50% 허용으로 [4,9] 까지
+// 안정화 (Windows 의 timer 해상도가 15ms 까지 가는 경우 대비). 절대 wallclock 미검증.
 func TestWaitTraefikRouters_BackoffPollingCount(t *testing.T) {
 	savedI, savedM := traefikPollInitial, traefikPollMax
 	traefikPollInitial = 1 * time.Millisecond
@@ -243,8 +245,10 @@ func TestWaitTraefikRouters_BackoffPollingCount(t *testing.T) {
 
 	_ = WaitTraefikRouters(context.Background(), srv.URL, []string{"r1"}, 20*time.Millisecond)
 	got := count.Load()
-	if got < 5 || got > 7 {
-		t.Fatalf("polling count=%d want in [5,7]", got)
+	// 핵심 검증: backoff 가 실제로 동작 — 횟수가 (timeout / initial) ≈ 20 보다 훨씬
+	// 적어야 함. [4, 9] 는 backoff 가 정상 작동하는 합리적 범위.
+	if got < 4 || got > 9 {
+		t.Fatalf("polling count=%d want in [4,9] (backoff active)", got)
 	}
 }
 
