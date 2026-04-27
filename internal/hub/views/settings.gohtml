@@ -12,7 +12,7 @@
     <dd>
       <div class="code-wrap" style="display:flex;align-items:center;gap:0.5rem">
         <code id="webhook-url" style="flex:1;padding:0.4rem 0.6rem;background:var(--pico-code-background,#f4f4f4);border-radius:4px">{{.WebhookURL}}</code>
-        <button class="outline" style="margin:0;padding:0.3rem 0.7rem;font-size:0.85rem" onclick="navigator.clipboard.writeText(document.getElementById('webhook-url').textContent)">Copy</button>
+        <button class="secondary outline" style="margin:0;padding:0.3rem 0.7rem;font-size:0.85rem" onclick="navigator.clipboard.writeText(document.getElementById('webhook-url').textContent)">Copy</button>
       </div>
     </dd>
     <dt style="margin-top:1rem">Content type</dt>
@@ -21,7 +21,7 @@
     <dd>
       <div style="display:flex;align-items:center;gap:0.5rem">
         <code id="webhook-secret" style="flex:1;padding:0.4rem 0.6rem;background:var(--pico-code-background,#f4f4f4);border-radius:4px;letter-spacing:0.1em">{{range .WebhookSecret}}•{{end}}</code>
-        <button class="outline" id="reveal-btn" style="margin:0;padding:0.3rem 0.7rem;font-size:0.85rem"
+        <button class="secondary outline" id="reveal-btn" style="margin:0;padding:0.3rem 0.7rem;font-size:0.85rem"
           onclick="toggleSecret('{{.WebhookSecret}}')">Reveal</button>
       </div>
     </dd>
