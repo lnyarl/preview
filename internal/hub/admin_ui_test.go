@@ -82,10 +82,20 @@ func (m *adminUIFakeAgentStore) Delete(_ context.Context, id string) error {
 }
 
 // adminUIFakePreviewStore — 최소 in-memory 구현 (ListAll/GetByID/UpdateStatus/ListByAgent/ListPreviewEvents).
+//
+// Phase 11 추가:
+//   - lastUpdateFields: UpdateStatus 의 마지막 호출 PreviewFields 를 capture (F-9 검증용).
+//   - lastUpdateTo: UpdateStatus 의 마지막 toStatus (분기 진입 검증용).
+//   - updateStatusErr: 다음 UpdateStatus 호출이 반환할 에러 강제 주입 (ErrStaleState 시뮬용, F-6).
+//   - updateStatusCalls: UpdateStatus 호출 횟수 카운터.
 type adminUIFakePreviewStore struct {
-	mu     sync.Mutex
-	rows   map[string]*store.Preview
-	events map[string][]store.PreviewEvent
+	mu                sync.Mutex
+	rows              map[string]*store.Preview
+	events            map[string][]store.PreviewEvent
+	lastUpdateFields  store.PreviewFields
+	lastUpdateTo      string
+	updateStatusErr   error
+	updateStatusCalls int
 }
 
 func newAdminUIPreviewStore() *adminUIFakePreviewStore {
@@ -142,9 +152,17 @@ func (f *adminUIFakePreviewStore) ListQueuedForCandidates(_ context.Context) ([]
 func (f *adminUIFakePreviewStore) Claim(_ context.Context, _ []string, _ string, _ time.Time) (*store.Preview, error) {
 	return nil, store.ErrNotFound
 }
-func (f *adminUIFakePreviewStore) UpdateStatus(_ context.Context, id, _, toStatus, _ string, now time.Time, _ store.PreviewFields) error {
+func (f *adminUIFakePreviewStore) UpdateStatus(_ context.Context, id, _, toStatus, _ string, now time.Time, fields store.PreviewFields) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.updateStatusCalls++
+	f.lastUpdateFields = fields
+	f.lastUpdateTo = toStatus
+	if f.updateStatusErr != nil {
+		err := f.updateStatusErr
+		f.updateStatusErr = nil // one-shot
+		return err
+	}
 	if p, ok := f.rows[id]; ok {
 		p.Status = toStatus
 		p.UpdatedAt = now
@@ -540,5 +558,210 @@ func TestAdminTestBuildSubmitDifferentBranchesCreateRowsAllAdhoc(t *testing.T) {
 		if p.PrNumber != 0 {
 			t.Errorf("row %s PrNumber=%d want 0", p.ID, p.PrNumber)
 		}
+	}
+}
+
+// seedAdhocRow 는 testBuildSubmit dedup 테스트의 사전 row 시딩 헬퍼.
+// status 외 필드는 합리적인 기본값으로 세팅한다.
+func seedAdhocRow(ps *adminUIFakePreviewStore, id, repo, branch, status string, createdAt time.Time) {
+	host := "10.0.0.1"
+	port := 5000
+	cid := "old-container"
+	urls := `{"web":"http://old"}`
+	ps.put(store.Preview{
+		ID: id, RepoFullName: repo, Branch: branch,
+		PrNumber: 0, CommitSha: "old-sha",
+		Status: status, IsAdhoc: true,
+		AgentHost: &host, AgentPort: &port, ContainerID: &cid,
+		PreviewURLs: urls, Labels: []string{},
+		CreatedAt: createdAt, UpdatedAt: createdAt,
+	})
+}
+
+// TestTestBuildSubmit_DedupActiveNoop (F-8, F-11): active 상태 row 존재 →
+// redirect, DB 변경 없음(상태/UpdateStatus 호출 0).
+func TestTestBuildSubmit_DedupActiveNoop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	as := newAdminUIAgentStore()
+	ps := newAdminUIPreviewStore()
+	tg := token.NewGenerator(4)
+	ui := NewAdminUIHandler(as, ps, tg, logger)
+
+	_ = as.Create(context.Background(), store.Agent{
+		ID: "a1", Name: "agent-1", Status: "online", CreatedAt: time.Now().UTC(),
+	})
+	now := time.Now().UTC()
+	seedAdhocRow(ps, "p-active", "acme/web", "main", "running", now)
+
+	form := "repo_clone_url=https://github.com/acme/web.git&branch=main&commit_sha=new-sha"
+	req := httptest.NewRequest("POST", "/admin/agents/a1/test-build", strings.NewReader(form))
+	req.SetPathValue("id", "a1")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	ui.testBuildSubmit(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d want 303", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/admin/previews/p-active" {
+		t.Errorf("Location=%q want /admin/previews/p-active", loc)
+	}
+	all, _ := ps.ListAll(context.Background())
+	if len(all) != 1 {
+		t.Errorf("rows=%d want 1 (no new row on dedup hit + active)", len(all))
+	}
+	if got := ps.rows["p-active"].Status; got != "running" {
+		t.Errorf("status=%q want running (no change on active dedup hit)", got)
+	}
+	if ps.updateStatusCalls != 0 {
+		t.Errorf("UpdateStatus called %d times; want 0 (active dedup must be noop)", ps.updateStatusCalls)
+	}
+}
+
+// TestTestBuildSubmit_DedupTerminalRequeue (F-9, F-11): done 상태 row 존재 →
+// UpdateStatus(→queued) + 6 필드 명시 reset + CommitSha=nil + redirect.
+func TestTestBuildSubmit_DedupTerminalRequeue(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	as := newAdminUIAgentStore()
+	ps := newAdminUIPreviewStore()
+	tg := token.NewGenerator(4)
+	ui := NewAdminUIHandler(as, ps, tg, logger)
+
+	_ = as.Create(context.Background(), store.Agent{
+		ID: "a1", Name: "agent-1", Status: "online", CreatedAt: time.Now().UTC(),
+	})
+	now := time.Now().UTC()
+	seedAdhocRow(ps, "p-done", "acme/web", "main", "done", now)
+
+	form := "repo_clone_url=https://github.com/acme/web.git&branch=main&commit_sha=new-sha"
+	req := httptest.NewRequest("POST", "/admin/agents/a1/test-build", strings.NewReader(form))
+	req.SetPathValue("id", "a1")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	ui.testBuildSubmit(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d want 303", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/admin/previews/p-done" {
+		t.Errorf("Location=%q want /admin/previews/p-done", loc)
+	}
+	all, _ := ps.ListAll(context.Background())
+	if len(all) != 1 {
+		t.Errorf("rows=%d want 1 (no new row on dedup hit + terminal)", len(all))
+	}
+	if got := ps.rows["p-done"].Status; got != "queued" {
+		t.Errorf("status=%q want queued after re-queue", got)
+	}
+	if ps.updateStatusCalls != 1 {
+		t.Errorf("UpdateStatus called %d times; want 1", ps.updateStatusCalls)
+	}
+	if ps.lastUpdateTo != "queued" {
+		t.Errorf("toStatus=%q want queued", ps.lastUpdateTo)
+	}
+
+	// F-9: 6 필드가 ptr-to-zero 로 reset, CommitSha 는 nil.
+	f := ps.lastUpdateFields
+	if f.CommitSha != nil {
+		t.Errorf("CommitSha=%v want nil (결정 4)", f.CommitSha)
+	}
+	checks := []struct {
+		name string
+		cond bool
+	}{
+		{"ContainerID", f.ContainerID != nil && *f.ContainerID == ""},
+		{"AgentHost", f.AgentHost != nil && *f.AgentHost == ""},
+		{"AgentPort", f.AgentPort != nil && *f.AgentPort == 0},
+		{"PreviewURLs", f.PreviewURLs != nil && *f.PreviewURLs == ""},
+		{"ErrorMessage", f.ErrorMessage != nil && *f.ErrorMessage == ""},
+		{"AssignedAgentID", f.AssignedAgentID != nil && *f.AssignedAgentID == ""},
+	}
+	for _, c := range checks {
+		if !c.cond {
+			t.Errorf("PreviewFields.%s not reset to ptr(zero)", c.name)
+		}
+	}
+}
+
+// TestTestBuildSubmit_DedupTerminalErrStaleState (F-6): done 상태이나 UpdateStatus 가
+// ErrStaleState 반환 → 303 redirect 유지, dispatcher 트리거 생략(다른 경로에 일임).
+//
+// 검증은 행동적 효과로 갈음한다: ErrStaleState 시 fake store 의 row 상태가 변하지 않고
+// (one-shot err 가 fake 본체 mutation 전에 return 되도록 구현됨) 응답이 303 으로 떨어진다.
+func TestTestBuildSubmit_DedupTerminalErrStaleState(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	as := newAdminUIAgentStore()
+	ps := newAdminUIPreviewStore()
+	tg := token.NewGenerator(4)
+	ui := NewAdminUIHandler(as, ps, tg, logger)
+
+	_ = as.Create(context.Background(), store.Agent{
+		ID: "a1", Name: "agent-1", Status: "online", CreatedAt: time.Now().UTC(),
+	})
+	now := time.Now().UTC()
+	seedAdhocRow(ps, "p-done", "acme/web", "main", "done", now)
+	// 다음 UpdateStatus 호출이 ErrStaleState 를 반환하도록 강제.
+	ps.updateStatusErr = store.ErrStaleState
+
+	form := "repo_clone_url=https://github.com/acme/web.git&branch=main&commit_sha=new-sha"
+	req := httptest.NewRequest("POST", "/admin/agents/a1/test-build", strings.NewReader(form))
+	req.SetPathValue("id", "a1")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	ui.testBuildSubmit(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d want 303 (ErrStaleState should not surface as 5xx)", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/admin/previews/p-done" {
+		t.Errorf("Location=%q want /admin/previews/p-done", loc)
+	}
+	if ps.updateStatusCalls != 1 {
+		t.Errorf("UpdateStatus called %d times; want 1 (one attempt then redirect)", ps.updateStatusCalls)
+	}
+	if got := ps.rows["p-done"].Status; got != "done" {
+		t.Errorf("status=%q want done preserved (ErrStaleState leaves row untouched)", got)
+	}
+}
+
+// TestTestBuildSubmit_NewPreview (F-7): FindAdhocByBranch ErrNotFound (빈 DB) →
+// 신규 INSERT + redirect. 기존 동작 유지.
+func TestTestBuildSubmit_NewPreview(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	as := newAdminUIAgentStore()
+	ps := newAdminUIPreviewStore()
+	tg := token.NewGenerator(4)
+	ui := NewAdminUIHandler(as, ps, tg, logger)
+
+	_ = as.Create(context.Background(), store.Agent{
+		ID: "a1", Name: "agent-1", Status: "online", CreatedAt: time.Now().UTC(),
+	})
+
+	form := "repo_clone_url=https://github.com/acme/web.git&branch=main&commit_sha=fresh-sha"
+	req := httptest.NewRequest("POST", "/admin/agents/a1/test-build", strings.NewReader(form))
+	req.SetPathValue("id", "a1")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	ui.testBuildSubmit(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("status=%d want 303", rr.Code)
+	}
+	all, _ := ps.ListAll(context.Background())
+	if len(all) != 1 {
+		t.Fatalf("rows=%d want 1 (new INSERT)", len(all))
+	}
+	got := all[0]
+	if !got.IsAdhoc {
+		t.Errorf("IsAdhoc=false want true")
+	}
+	if got.RepoFullName != "acme/web" || got.Branch != "main" || got.CommitSha != "fresh-sha" {
+		t.Errorf("row=%+v not as expected", got)
+	}
+	if !strings.HasPrefix(rr.Header().Get("Location"), "/admin/previews/") {
+		t.Errorf("Location=%q want /admin/previews/...", rr.Header().Get("Location"))
+	}
+	if ps.updateStatusCalls != 0 {
+		t.Errorf("UpdateStatus called %d times; want 0 (new preview path)", ps.updateStatusCalls)
 	}
 }
