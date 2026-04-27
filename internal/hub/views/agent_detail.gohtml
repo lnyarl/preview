@@ -6,6 +6,8 @@
 
 <p><a href="/admin/agents">&larr; Back to agents</a></p>
 
+<p><a href="/admin/agents/{{.AgentID}}/test-build" role="button">Test Build</a></p>
+
 {{if .Error}}
   <article role="alert">{{.Error}}</article>
 {{end}}
@@ -17,5 +19,39 @@
     <dt>Labels</dt><dd>{{if .LabelsString}}{{.LabelsString}}{{else}}<em>none</em>{{end}}</dd>
     <dt>Created</dt><dd>{{.CreatedString}}</dd>
   </dl>
+</section>
+
+<section>
+  <h3>Active Previews</h3>
+  {{if .ActivePreviews}}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">ID</th>
+          <th scope="col">Status</th>
+          <th scope="col">Branch</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .ActivePreviews}}
+        <tr>
+          <td>
+            <a href="/admin/previews/{{.ID}}">{{if eq .PrNumber 0}}Test Build{{else}}#{{.PrNumber}}{{end}}</a>
+            {{if .IsAdhoc}}<span class="badge" data-source="adhoc" style="margin-left:0.4em; padding:0.1em 0.45em; font-size:0.75em; border:1px solid var(--pico-secondary); border-radius:3px; color:var(--pico-secondary);">Adhoc</span>{{end}}
+          </td>
+          <td>{{statusBadge .Status}}</td>
+          <td><code>{{.Branch}}</code></td>
+          <td style="white-space:nowrap; font-size:0.85em;">{{.UpdatedString}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{if gt .ActiveTotal (len .ActivePreviews)}}
+      <p><small><em>최근 {{len .ActivePreviews}}개만 표시 (총 {{.ActiveTotal}}개)</em></small></p>
+    {{end}}
+  {{else}}
+    <p><em>No active previews.</em></p>
+  {{end}}
 </section>
 {{end}}

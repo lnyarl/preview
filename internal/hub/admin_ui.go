@@ -1083,7 +1083,15 @@ type agentDetailView struct {
 	LastSeenString string
 	CreatedString  string
 	Error          string
+	// ActivePreviews 는 Phase 15 D-3 — 이 Agent 에 할당된 assigned/building/running
+	// 상태의 preview 목록 (UpdatedAt DESC, 최대 50개).
+	ActivePreviews []previewRow
+	// ActiveTotal 은 50건 자르기 전의 원본 개수 (hint 표시용).
+	ActiveTotal int
 }
+
+// activePreviewLimit 은 agent_detail 의 Active Previews 표 최대 행수 (Phase 15 결정 4).
+const activePreviewLimit = 50
 
 // agentDetail 은 GET /admin/agents/{id} 핸들러.
 func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
@@ -1113,6 +1121,48 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.LastSeenAt != nil {
 		view.LastSeenString = a.LastSeenAt.UTC().Format(time.RFC3339)
+	}
+	// Phase 15 D-3: Active Previews 섹션 — assigned/building/running 상태의 preview 목록.
+	// 실패 시 WARN + 빈 목록으로 계속 (Phase 9/10 의 soft-fail 패턴, 결정 3).
+	if h.PreviewStore != nil {
+		ps, perr := h.PreviewStore.ListByAgent(r.Context(), id,
+			[]string{"assigned", "building", "running"})
+		if perr != nil {
+			h.Logger.Warn("admin_ui_agent_detail_previews_failed",
+				"agent_id", id, "err", perr.Error())
+		} else {
+			// newest first (UpdatedAt DESC).
+			sort.Slice(ps, func(i, j int) bool {
+				return ps[i].UpdatedAt.After(ps[j].UpdatedAt)
+			})
+			view.ActiveTotal = len(ps)
+			if len(ps) > activePreviewLimit {
+				ps = ps[:activePreviewLimit]
+			}
+			rows := make([]previewRow, 0, len(ps))
+			for _, p := range ps {
+				agentLabel := ""
+				if p.AssignedAgentID != nil {
+					agentLabel = *p.AssignedAgentID
+				}
+				var urls map[string]string
+				if p.PreviewURLs != "" {
+					_ = json.Unmarshal([]byte(p.PreviewURLs), &urls)
+				}
+				rows = append(rows, previewRow{
+					ID:            p.ID,
+					PrNumber:      p.PrNumber,
+					RepoFullName:  p.RepoFullName,
+					Status:        p.Status,
+					Branch:        p.Branch,
+					AgentLabel:    agentLabel,
+					UpdatedString: p.UpdatedAt.UTC().Format(time.RFC3339),
+					PreviewURLs:   urls,
+					IsAdhoc:       p.IsAdhoc,
+				})
+			}
+			view.ActivePreviews = rows
+		}
 	}
 	h.renderHTML(w, http.StatusOK, "agent_detail.gohtml", view)
 }
