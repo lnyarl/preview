@@ -7,6 +7,6 @@ COPY . .
 RUN go build -o /agent ./cmd/agent
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates git docker-cli
+RUN apk add --no-cache ca-certificates git docker-cli docker-cli-compose
 COPY --from=builder /agent /usr/local/bin/agent
 ENTRYPOINT ["agent"]
