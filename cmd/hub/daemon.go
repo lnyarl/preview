@@ -109,6 +109,7 @@ func runDaemon(args []string) error {
 	jobSender := hub.NewWSJobSender(reg)
 	adminUI.SetTeardownSender(jobSender)
 	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, logger)
+	adminUI.SetDispatcher(dispatcher)
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)

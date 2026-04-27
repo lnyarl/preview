@@ -10,6 +10,7 @@
 package hub
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,7 @@ type AdminUIHandler struct {
 	Logger           *slog.Logger
 	Registry         *ConnRegistry  // 옵션 — online 카운트 정확도 향상.
 	TeardownSender   TeardownSender // 옵션 — agent teardown WS 메시지 송신.
+	Dispatcher       *Dispatcher    // 옵션 — rebuild/test-build 후 즉시 dispatch 트리거.
 	AgentDownloadURL string         // 빈 값이면 소스 빌드 안내, 설정 시 다운로드 링크 표시.
 
 	cfg Config // 설정 페이지 표시용 (웹훅 시크릿 등).
@@ -77,6 +79,9 @@ func (h *AdminUIHandler) SetRegistry(reg *ConnRegistry) { h.Registry = reg }
 
 // SetTeardownSender 는 JOB_TEARDOWN WS 메시지 송신자를 주입한다 (옵션).
 func (h *AdminUIHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender = s }
+
+// SetDispatcher 는 rebuild/test-build 후 즉시 dispatch 트리거용 Dispatcher 를 주입한다 (옵션).
+func (h *AdminUIHandler) SetDispatcher(d *Dispatcher) { h.Dispatcher = d }
 
 // SetConfig 는 설정 페이지 표시에 필요한 Hub Config 를 주입한다.
 func (h *AdminUIHandler) SetConfig(cfg Config) { h.cfg = cfg }
@@ -426,9 +431,29 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 	previewID := p.ID
 	if !created && prev != nil {
 		previewID = prev.ID
+		// 기존 preview 가 done/failed 이면 re-run: 필드 초기화 후 queued 로 복귀.
+		if prev.Status == "done" || prev.Status == "failed" {
+			emptyStr := ""
+			zeroPort := 0
+			fields := store.PreviewFields{
+				AssignedAgentID: &emptyStr,
+				ContainerID:     &emptyStr,
+				AgentHost:       &emptyStr,
+				AgentPort:       &zeroPort,
+				PreviewURLs:     &emptyStr,
+				ErrorMessage:    &emptyStr,
+			}
+			if uerr := h.PreviewStore.UpdateStatus(r.Context(), previewID, prev.Status, "queued",
+				"re-run requested via admin UI", h.now(), fields); uerr != nil {
+				h.Logger.Error("admin_ui_test_build_requeue_failed", "err", uerr.Error())
+				http.Error(w, "internal", http.StatusInternalServerError)
+				return
+			}
+		}
 	}
 	h.Logger.Info("test_build_triggered", "agent_id", id,
 		"repo", repoFullName, "branch", branch, "preview_id", previewID)
+	h.triggerDispatch(r.Context())
 	http.Redirect(w, r, "/admin/previews/"+previewID, http.StatusSeeOther)
 }
 
@@ -762,11 +787,26 @@ func (h *AdminUIHandler) previewRebuild(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.Logger.Info("preview_rebuild_requested", "preview_id", id)
+	h.triggerDispatch(r.Context())
 	if wantsJSON {
 		writeJSON(w, http.StatusOK, map[string]any{"preview_id": id, "status": "queued"})
 		return
 	}
 	http.Redirect(w, r, "/admin/previews/"+id, http.StatusSeeOther)
+}
+
+// triggerDispatch 는 현재 online 인 모든 agent 에 대해 dispatcher.OnReady 를 호출해
+// 방금 queued 된 preview 가 즉시 할당되도록 한다.
+// Dispatcher 또는 Registry 가 nil 이면 no-op.
+func (h *AdminUIHandler) triggerDispatch(ctx context.Context) {
+	if h.Dispatcher == nil || h.Registry == nil {
+		return
+	}
+	for agentID := range h.Registry.OnlineAgentIDs() {
+		if err := h.Dispatcher.OnReady(ctx, agentID); err != nil {
+			h.Logger.Warn("admin_ui_trigger_dispatch_failed", "agent_id", agentID, "err", err.Error())
+		}
+	}
 }
 
 // ---------- Agent detail ----------

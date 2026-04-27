@@ -47,9 +47,9 @@
 
 <section>
   <form method="POST" action="/admin/previews/{{.Preview.ID}}/rebuild">
-    <button type="submit"{{if not .RebuildEnabled}} disabled{{end}}>Rebuild</button>
+    <button type="submit"{{if not .RebuildEnabled}} disabled{{end}}>Re-run</button>
   </form>
-  <small>Rebuild is enabled only when status is <code>done</code> or <code>failed</code>.</small>
+  <small>Re-run is enabled only when status is <code>done</code> or <code>failed</code>.</small>
 </section>
 
 <section>
