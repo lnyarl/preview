@@ -25,6 +25,59 @@ func TestStatusBadge_EscapesUnknownStatus(t *testing.T) {
 	}
 }
 
+// TestNavActive_DashboardExactMatchOnly 는 §3 결정 3 의 핵심:
+// Dashboard(`/admin`) 만 정확 일치, 그 외 항목은 정확 일치 또는
+// `linkPath+"/"` 시작 시 active.
+func TestNavActive_DashboardExactMatchOnly(t *testing.T) {
+	const activeMark = `aria-current="page"`
+	cases := []struct {
+		current  string
+		link     string
+		expected bool
+	}{
+		// Dashboard: 정확 일치만
+		{"/admin", "/admin", true},
+		{"/admin/agents", "/admin", false},
+		{"/admin/previews/abc", "/admin", false},
+
+		// Agents: 정확 일치 + 자손
+		{"/admin/agents", "/admin/agents", true},
+		{"/admin/agents/abc", "/admin/agents", true},
+		{"/admin/agents/abc/test-build", "/admin/agents", true},
+
+		// Previews: 다른 카테고리 영향 없음
+		{"/admin/previews/abc", "/admin/agents", false},
+
+		// 경계 누수 차단: agents-history 는 agents 와 별개
+		{"/admin/agents-history", "/admin/agents", false},
+
+		// 경계 누수 차단: 다른 경로의 prefix 와 무관
+		{"/admin/repos/x/y/secrets", "/admin/repos", true},
+		{"/admin/reposBAD", "/admin/repos", false},
+	}
+	for _, tc := range cases {
+		got := string(navActive(tc.current, tc.link))
+		isActive := strings.Contains(got, activeMark)
+		if isActive != tc.expected {
+			t.Errorf("navActive(%q, %q) = %q; want active=%v", tc.current, tc.link, got, tc.expected)
+		}
+	}
+}
+
+// TestNavActive_OutputShape 는 §5 가 명시한 단일 출력 형태를 보장한다.
+func TestNavActive_OutputShape(t *testing.T) {
+	got := string(navActive("/admin/agents", "/admin/agents"))
+	for _, sub := range []string{
+		`aria-current="page"`,
+		`class="nav-active"`,
+		`style="font-weight:700; color:var(--pico-primary)"`,
+	} {
+		if !strings.Contains(got, sub) {
+			t.Errorf("navActive missing substring %q; got=%s", sub, got)
+		}
+	}
+}
+
 // TestStatusBadge_KnownStatuses 는 §5 표의 7개 status 가 각각 의미적
 // element / 색 토큰을 출력하는지 핵심 substring 만 검증한다 (정확한 padding/색
 // 값은 디자인 미세조정 영역이라 검증 대상 아님).

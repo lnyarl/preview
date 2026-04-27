@@ -199,13 +199,14 @@ func statusBadge(status string) template.HTML {
 }
 
 // navActive 는 nav 링크의 active 여부를 결정해 aria-current 속성과 강조 클래스/스타일을
-// 합친 attribute 문자열을 반환한다. 매칭 규칙(모든 nav 항목 공통):
+// 합친 attribute 문자열을 반환한다. 매칭 규칙:
 //
-//	match := currentPath == linkPath || strings.HasPrefix(currentPath, linkPath+"/")
+//   - linkPath == "/admin"  : currentPath == "/admin" (정확 일치만). prefix 매칭을
+//     쓰면 모든 /admin/* 경로에서 Dashboard 가 active 가 되어 두 nav 가 동시 강조됨.
+//   - 그 외                 : currentPath == linkPath || HasPrefix(currentPath, linkPath+"/")
+//     `linkPath+"/"` 접미사 강제로 `/admin/agents-history` 같은 경계 누수 차단.
 //
-// 즉 정확 일치이거나 `linkPath/` 로 시작할 때만 active. (단순 HasPrefix 는
-// `/admin/agents-history` 같은 경계 누수 위험이 있어 `linkPath+"/"` 접미사 강제 —
-// phase-12-ux-consistency.md §3 결정 3.)
+// (phase-12-ux-consistency.md §3 결정 3.)
 //
 // `class="nav-active"` 는 본 Phase 시점에서 시각에 영향 없는 dead identifier 지만
 // 후속 Phase 의 별도 CSS 도입 시 selector hook 으로 둔다 (결정 9).
@@ -213,8 +214,15 @@ func statusBadge(status string) template.HTML {
 // 입력은 코드 상수 + URL.Path 라 별도 escape 가 필요하지 않으며, 반환 문자열은 모두
 // 정적 ASCII 이므로 attribute 컨텍스트 안전.
 func navActive(currentPath, linkPath string) template.HTMLAttr {
+	const activeAttr = ` aria-current="page" class="nav-active" style="font-weight:700; color:var(--pico-primary)"`
+	if linkPath == "/admin" {
+		if currentPath == "/admin" {
+			return template.HTMLAttr(activeAttr)
+		}
+		return template.HTMLAttr("")
+	}
 	if currentPath == linkPath || strings.HasPrefix(currentPath, linkPath+"/") {
-		return template.HTMLAttr(` aria-current="page" class="nav-active" style="font-weight:700; color:var(--pico-primary)"`)
+		return template.HTMLAttr(activeAttr)
 	}
 	return template.HTMLAttr("")
 }

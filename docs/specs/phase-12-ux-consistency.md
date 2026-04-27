@@ -47,16 +47,20 @@
 - **되돌릴 때 비용**: 작다. helper 본문을 페이지 if/else 로 inline 화.
 
 ### 결정 3: `navActive` helper — `func(currentPath, linkPath string) template.HTMLAttr`
-- **결정**: 두 문자열 비교 후 일치 시 ` aria-current="page" class="nav-active" style="font-weight:700; color:var(--pico-primary)"`, 불일치 시 빈 문자열을 `template.HTMLAttr` 로 반환. 매칭 규칙은 **모든 nav 항목에 동일하게** 다음 한 줄을 적용:
+- **결정**: 두 문자열 비교 후 일치 시 ` aria-current="page" class="nav-active" style="font-weight:700; color:var(--pico-primary)"`, 불일치 시 빈 문자열을 `template.HTMLAttr` 로 반환. 매칭 규칙은 다음 두 분기:
   ```
-  match := currentPath == linkPath || strings.HasPrefix(currentPath, linkPath+"/")
+  if linkPath == "/admin":
+      match := currentPath == "/admin"             # Dashboard 만 정확 일치
+  else:
+      match := currentPath == linkPath ||
+               strings.HasPrefix(currentPath, linkPath+"/")
   ```
-  즉 정확 일치이거나 `linkPath/` 로 시작할 때만 active. 단순 `strings.HasPrefix(currentPath, linkPath)` 는 `/admin/agents-history` 같은 경계 누수 위험이 있으므로 위 규칙을 강제한다. 이 규칙으로 `/admin` 도 정확 일치만 Dashboard active 가 되며 (`/admin/agents` 는 `/admin/` 으로 시작 ≠ `/admin` 이므로 Dashboard active 아님), `/admin/agents/{id}` 는 `/admin/agents/` 로 시작하므로 Agents active 가 된다.
-- **근거**: 단일 매칭 규칙으로 nav 항목별 분기 없이 helper 한 줄에서 처리. `linkPath+"/"` 접미사 보장이 prefix 경계 누수를 막는 핵심 트릭.
+  Dashboard(`/admin`) 만 정확 일치를 강제하고, 나머지(Agents/Previews/Repos/Settings) 는 정확 일치이거나 `linkPath/` 로 시작할 때 active. 후자는 `/admin/agents/{id}` → Agents active 같은 자연스러운 동작을 유지하면서 `/admin/agents-history` 같은 경계 누수도 차단한다. Dashboard 예외 분기가 필요한 이유: prefix 매칭을 그대로 적용하면 `/admin/agents` 는 `/admin/` 으로 시작하므로 Dashboard 까지 동시 active 가 되어 "현재 페이지가 어딘지" 시각이 흐려진다. 사용자 의도(현재 카테고리 1개만 강조)에 맞추기 위한 분기.
+- **근거**: nav 의 시각적 의미는 "현재 페이지의 최상위 카테고리 정확히 1개" 강조. Dashboard 는 `/admin` 자체에서만 active 가 되어야 두 nav 동시 강조를 막는다. 한 줄 분기로 해결되며 helper 호출 측은 동일.
 - **버려진 대안 1**: 핸들러에서 active 키 결정 후 view struct 에 넣기 → 페이지마다 동일 로직 반복. 공통 base view 도입은 §3 결정 5 와 충돌.
 - **버려진 대안 2**: layout 안에 if 체인 직접 작성 → if 5단 분기로 가독성 저하.
-- **버려진 대안 3**: nav 항목별로 다른 매칭 규칙 (Dashboard 만 정확 일치, 나머지는 단순 prefix) → `linkPath+"/"` 트릭 1줄로 통일 가능하므로 분기 불필요.
-- **되돌릴 때 비용**: 작다.
+- **버려진 대안 3**: 모든 항목에 단일 `linkPath+"/"` prefix 규칙 적용 → Dashboard 가 모든 `/admin/*` 에서 함께 active 되어 시각 충돌. (1차 리뷰 후 helper 코드 검증 단계에서 발견된 모순 — 본 결정에서 분기 1줄로 해결.)
+- **되돌릴 때 비용**: 작다 (분기 한 줄 제거).
 
 ### 결정 4: Dashboard 의 Status breakdown 은 A-2 적용 대상이 아니다 (현재 구조상)
 - **결정**: `dashboard.gohtml` 의 Status breakdown 테이블은 status 이름이 컬럼 헤더(`<th>queued</th>` 등)이고 본문은 카운트 숫자(`<td>{{.StatusCounts.queued}}</td>`)다. status 자체가 동적 표시 되는 위치가 아니므로 본 Phase 에서는 dashboard 를 수정하지 않는다. 향후 E-2 (클릭 가능한 카드) Phase 에서 status 텍스트가 동적으로 들어가는 시점에 helper 적용.
