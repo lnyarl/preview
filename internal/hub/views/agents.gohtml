@@ -33,10 +33,10 @@
         <td style="display: flex; flex-direction: row; flex-wrap: nowrap; gap: 8px;">
           <a href="/admin/agents/{{.ID}}" role="button" class="secondary outline" style="height: fit-content;">Configure</a>
           <a href="/admin/agents/{{.ID}}/test-build" role="button" class="secondary outline" style="height: fit-content;">Test Build</a>
-          <form method="POST" action="/admin/agents/{{.ID}}/teardowns" style="display:inline">
+          <form method="POST" action="/admin/agents/{{.ID}}/teardowns" style="display:inline" onsubmit="return confirm('이 Agent의 모든 실행 중 preview를 종료하시겠습니까?')">
             <button type="submit" class="contrast">Teardown All</button>
           </form>
-          <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline">
+          <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline" onsubmit="return confirm('이 Agent를 삭제하시겠습니까? 진행 중인 preview가 있다면 모두 정리됩니다.')">
             <button type="submit" class="contrast">Delete</button>
           </form>
         </td>
