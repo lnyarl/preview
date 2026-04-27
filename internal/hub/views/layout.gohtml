@@ -26,5 +26,25 @@
     {{template "content" .}}
   </main>
   <footer class="container"><small>Preview Hub MVP</small></footer>
+  <script>
+  (function () {
+    document.addEventListener('submit', function (e) {
+      if (e.defaultPrevented) return;
+      var form = e.target;
+      if (!form || form.tagName !== 'FORM') return;
+      var btns = form.querySelectorAll('button[type=submit], button:not([type]), input[type=submit]');
+      setTimeout(function () {
+        for (var i = 0; i < btns.length; i++) {
+          var b = btns[i];
+          if (b.disabled) continue;
+          if (b.dataset.origText === undefined) b.dataset.origText = b.textContent;
+          b.disabled = true;
+          if ('value' in b && b.tagName === 'INPUT') b.value = '처리 중...';
+          else b.textContent = '처리 중...';
+        }
+      }, 0);
+    }, false);
+  })();
+  </script>
 </body>
 </html>{{end}}
