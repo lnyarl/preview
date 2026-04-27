@@ -30,9 +30,13 @@
         <td>{{.LabelsString}}</td>
         <td>{{.RunningCount}}</td>
         <td>{{.LastSeenString}}</td>
-        <td style="display: flex; flex-direction: row; flex-wrap: nowrap;">
-          <a href="/admin/agents/{{.ID}}" role="button" class="outline" style="height: fit-content; margin-right: 10px;">Configure</a>
-           <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline">
+        <td style="display: flex; flex-direction: row; flex-wrap: nowrap; gap: 8px;">
+          <a href="/admin/agents/{{.ID}}" role="button" class="outline" style="height: fit-content;">Configure</a>
+          <a href="/admin/agents/{{.ID}}/test-build" role="button" class="outline" style="height: fit-content;">Test Build</a>
+          <form method="POST" action="/admin/agents/{{.ID}}/teardowns" style="display:inline">
+            <button type="submit" class="outline">Teardown All</button>
+          </form>
+          <form method="POST" action="/admin/agents/{{.ID}}/delete" style="display:inline">
             <button type="submit" class="secondary outline">Delete</button>
           </form>
         </td>

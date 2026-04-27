@@ -107,6 +107,7 @@ func runDaemon(args []string) error {
 	// Phase 2 wiring: Dispatcher (READY → JOB_ASSIGN) + StatusUpdater.
 	// Phase 6 (결정 6): RepoURLResolver 제거. RepoURL = preview.RepoCloneURL (webhook 에서 추출).
 	jobSender := hub.NewWSJobSender(reg)
+	adminUI.SetTeardownSender(jobSender)
 	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, logger)
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)

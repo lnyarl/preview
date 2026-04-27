@@ -36,8 +36,9 @@ type AdminUIHandler struct {
 	PreviewStore     store.PreviewStore
 	TokenGen         *token.Generator
 	Logger           *slog.Logger
-	Registry         *ConnRegistry // 옵션 — online 카운트 정확도 향상.
-	AgentDownloadURL string        // 빈 값이면 소스 빌드 안내, 설정 시 다운로드 링크 표시.
+	Registry         *ConnRegistry  // 옵션 — online 카운트 정확도 향상.
+	TeardownSender   TeardownSender // 옵션 — agent teardown WS 메시지 송신.
+	AgentDownloadURL string         // 빈 값이면 소스 빌드 안내, 설정 시 다운로드 링크 표시.
 
 	cfg Config // 설정 페이지 표시용 (웹훅 시크릿 등).
 
@@ -66,12 +67,16 @@ func NewAdminUIHandler(as store.AgentStore, ps store.PreviewStore, tg *token.Gen
 		"preview_detail.gohtml",
 		"agent_detail.gohtml",
 		"settings.gohtml",
+		"test_build.gohtml",
 	})
 	return h
 }
 
 // SetRegistry 는 online 여부 카운트 보강용 ConnRegistry 를 주입한다 (옵션).
 func (h *AdminUIHandler) SetRegistry(reg *ConnRegistry) { h.Registry = reg }
+
+// SetTeardownSender 는 JOB_TEARDOWN WS 메시지 송신자를 주입한다 (옵션).
+func (h *AdminUIHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender = s }
 
 // SetConfig 는 설정 페이지 표시에 필요한 Hub Config 를 주입한다.
 func (h *AdminUIHandler) SetConfig(cfg Config) { h.cfg = cfg }
@@ -90,6 +95,9 @@ func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 	// {id} 가 "token" 등 다른 정적 prefix 와 충돌하지 않도록 GET /admin/agents/token 보다
 	// 뒤에 등록되어도 net/http mux 는 longest-prefix + literal-match 우선이므로 안전.
 	mux.HandleFunc("GET /admin/agents/{id}", h.agentDetail)
+	mux.HandleFunc("GET /admin/agents/{id}/test-build", h.testBuildForm)
+	mux.HandleFunc("POST /admin/agents/{id}/test-build", h.testBuildSubmit)
+	mux.HandleFunc("POST /admin/agents/{id}/teardowns", h.agentTeardowns)
 }
 
 // mustParsePages 는 layout.gohtml + 각 페이지를 합쳐 별도 *template.Template 로 만든다.
@@ -347,6 +355,135 @@ func (h *AdminUIHandler) agentDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin/agents", http.StatusSeeOther)
 }
 
+// ---------- Test Build ----------
+
+type testBuildView struct {
+	Title     string
+	AgentID   string
+	AgentName string
+	Error     string
+}
+
+func (h *AdminUIHandler) testBuildForm(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusNotFound)
+		return
+	}
+	a, err := h.AgentStore.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	h.renderHTML(w, http.StatusOK, "test_build.gohtml",
+		testBuildView{Title: "Test Build", AgentID: id, AgentName: a.Name})
+}
+
+func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	repoCloneURL := strings.TrimSpace(r.FormValue("repo_clone_url"))
+	branch := strings.TrimSpace(r.FormValue("branch"))
+	if branch == "" {
+		branch = "main"
+	}
+	commitSha := strings.TrimSpace(r.FormValue("commit_sha"))
+
+	repoFullName, err := repoFullNameFromURL(repoCloneURL)
+	if err != nil {
+		a, _ := h.AgentStore.GetByID(r.Context(), id)
+		name := id
+		if a != nil {
+			name = a.Name
+		}
+		h.renderHTML(w, http.StatusBadRequest, "test_build.gohtml",
+			testBuildView{Title: "Test Build", AgentID: id, AgentName: name,
+				Error: "invalid repo URL: " + err.Error()})
+		return
+	}
+
+	now := h.now()
+	p := store.Preview{
+		ID:           uuid.NewString(),
+		RepoFullName: repoFullName,
+		PrNumber:     0,
+		CommitSha:    commitSha,
+		Branch:       branch,
+		RepoCloneURL: repoCloneURL,
+		Labels:       []string{},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	created, prev, err := h.PreviewStore.Upsert(r.Context(), p)
+	if err != nil {
+		h.Logger.Error("admin_ui_test_build_upsert_failed", "err", err.Error())
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	previewID := p.ID
+	if !created && prev != nil {
+		previewID = prev.ID
+	}
+	h.Logger.Info("test_build_triggered", "agent_id", id,
+		"repo", repoFullName, "branch", branch, "preview_id", previewID)
+	http.Redirect(w, r, "/admin/previews/"+previewID, http.StatusSeeOther)
+}
+
+// repoFullNameFromURL 은 git clone URL 에서 "owner/repo" 를 추출한다.
+// e.g. https://github.com/owner/repo.git → "owner/repo"
+func repoFullNameFromURL(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	path := strings.Trim(u.Path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("expected owner/repo path in URL, got %q", u.Path)
+	}
+	return parts[0] + "/" + parts[1], nil
+}
+
+// ---------- Agent teardowns ----------
+
+func (h *AdminUIHandler) agentTeardowns(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "agent id required", http.StatusNotFound)
+		return
+	}
+	previews, err := h.PreviewStore.ListByAgent(r.Context(), id,
+		[]string{"assigned", "building", "running"})
+	if err != nil {
+		h.Logger.Error("admin_ui_teardowns_list_failed", "err", err.Error(), "agent_id", id)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	now := h.now()
+	count := 0
+	for _, p := range previews {
+		if err := h.PreviewStore.UpdateStatus(r.Context(), p.ID, p.Status, "teardown",
+			"manual teardown via admin UI", now, store.PreviewFields{}); err != nil {
+			h.Logger.Warn("admin_ui_teardown_update_failed",
+				"preview_id", p.ID, "err", err.Error())
+			continue
+		}
+		if h.TeardownSender != nil {
+			if err := h.TeardownSender.SendTeardown(r.Context(), id, p.ID); err != nil {
+				h.Logger.Warn("admin_ui_teardown_send_failed",
+					"preview_id", p.ID, "err", err.Error())
+			}
+		}
+		count++
+	}
+	h.Logger.Info("agent_teardowns", "agent_id", id, "count", count)
+	http.Redirect(w, r, "/admin/agents", http.StatusSeeOther)
+}
+
 // ---------- Previews list ----------
 
 type previewRow struct {
@@ -437,6 +574,7 @@ type previewDetailRow struct {
 	CommitSha    string
 	Branch       string
 	Status       string
+	ErrorMessage string
 }
 
 type previewDetailView struct {
@@ -447,6 +585,41 @@ type previewDetailView struct {
 	Events          []eventRow
 	RebuildEnabled  bool
 	ConflictMessage string
+	Diagnosis       string // 사람이 읽을 수 있는 실패 원인 요약
+}
+
+// diagnoseBuildError 는 raw 에러 메시지를 분석해 원인을 한 문장으로 반환한다.
+func diagnoseBuildError(msg string) string {
+	switch {
+	case strings.Contains(msg, "repo_url_missing"):
+		return "저장소 URL이 설정되지 않았습니다."
+	case strings.Contains(msg, "repocache_ensure") && strings.Contains(msg, "exit status 128"):
+		return "저장소를 clone할 수 없습니다. URL이 올바른지, private 저장소라면 GITHUB_TOKEN(또는 --github-token)이 필요합니다."
+	case strings.Contains(msg, "repocache_checkout") && strings.Contains(msg, "fetch:"):
+		return "저장소 fetch 실패. private 저장소라면 GITHUB_TOKEN(또는 --github-token)을 설정하세요."
+	case strings.Contains(msg, "resolve ref") && strings.Contains(msg, "exit status 128"):
+		// "resolve ref \"origin/main\": ..."에서 브랜치명 추출
+		branch := "지정한 브랜치"
+		if i := strings.Index(msg, "resolve ref \""); i >= 0 {
+			rest := msg[i+len("resolve ref \""):]
+			if j := strings.Index(rest, "\""); j >= 0 {
+				branch = `"` + rest[:j] + `"`
+			}
+		}
+		return fmt.Sprintf("브랜치 %s를 찾을 수 없습니다. 저장소의 브랜치 이름을 확인하세요.", branch)
+	case strings.Contains(msg, "not found after fetch"):
+		return "지정한 커밋 SHA가 저장소에 없습니다. SHA가 올바른지 확인하세요."
+	case strings.Contains(msg, "preview_config_load"), strings.Contains(msg, ".preview.yml"):
+		return ".preview.yml 파일을 찾을 수 없거나 형식이 잘못됐습니다."
+	case strings.Contains(msg, "docker build"), strings.Contains(msg, "handleDockerfile"):
+		return "Docker 이미지 빌드에 실패했습니다. Dockerfile을 확인하세요."
+	case strings.Contains(msg, "compose") && strings.Contains(msg, "exit status"):
+		return "docker compose up에 실패했습니다. docker-compose.yml을 확인하세요."
+	case msg == "":
+		return ""
+	default:
+		return "빌드 중 오류가 발생했습니다."
+	}
 }
 
 // PreviewDetail 는 GET /admin/previews/{id} SSR 핸들러. WebhookHandler 가 Accept 분기에서 호출.
@@ -502,8 +675,16 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	rebuildEnabled := p.Status == "done" || p.Status == "failed"
 	conflict := r.URL.Query().Get("msg")
+	errMsg := ""
+	if p.ErrorMessage != nil {
+		errMsg = *p.ErrorMessage
+	}
+	title := fmt.Sprintf("PR #%d — %s", p.PrNumber, p.RepoFullName)
+	if p.PrNumber == 0 {
+		title = fmt.Sprintf("Test Build — %s", p.RepoFullName)
+	}
 	view := previewDetailView{
-		Title: fmt.Sprintf("PR #%d", p.PrNumber),
+		Title: title,
 		Preview: previewDetailRow{
 			ID:           p.ID,
 			PrNumber:     p.PrNumber,
@@ -511,12 +692,14 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			CommitSha:    p.CommitSha,
 			Branch:       p.Branch,
 			Status:       p.Status,
+			ErrorMessage: errMsg,
 		},
 		AgentLine:       agentLine,
 		PreviewURLs:     previewURLs,
 		Events:          rows,
 		RebuildEnabled:  rebuildEnabled,
 		ConflictMessage: conflict,
+		Diagnosis:       diagnoseBuildError(errMsg),
 	}
 	h.renderHTML(w, http.StatusOK, "preview_detail.gohtml", view)
 }

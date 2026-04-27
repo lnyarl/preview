@@ -1,0 +1,28 @@
+{{define "content"}}
+<hgroup>
+  <h1>Test Build</h1>
+  <h2>Agent: {{.AgentName}}</h2>
+</hgroup>
+
+{{if .Error}}
+  <article role="alert">{{.Error}}</article>
+{{end}}
+
+<form method="POST" action="/admin/agents/{{.AgentID}}/test-build">
+  <label for="repo_clone_url">Repository Clone URL</label>
+  <input type="url" id="repo_clone_url" name="repo_clone_url"
+         placeholder="https://github.com/owner/repo.git" required>
+
+  <label for="branch">Branch</label>
+  <input type="text" id="branch" name="branch" value="main" required>
+
+  <label for="commit_sha">Commit SHA <small>(optional — leave blank for latest on branch)</small></label>
+  <input type="text" id="commit_sha" name="commit_sha"
+         placeholder="abc1234...">
+
+  <div style="display: flex; gap: 8px; margin-top: 1rem;">
+    <button type="submit">Trigger Build</button>
+    <a href="/admin/agents" role="button" class="secondary outline">Cancel</a>
+  </div>
+</form>
+{{end}}
