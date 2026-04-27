@@ -393,9 +393,6 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 	}
 	repoCloneURL := strings.TrimSpace(r.FormValue("repo_clone_url"))
 	branch := strings.TrimSpace(r.FormValue("branch"))
-	if branch == "" {
-		branch = "main"
-	}
 	commitSha := strings.TrimSpace(r.FormValue("commit_sha"))
 
 	repoFullName, err := repoFullNameFromURL(repoCloneURL)

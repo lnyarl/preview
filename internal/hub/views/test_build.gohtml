@@ -13,8 +13,8 @@
   <input type="url" id="repo_clone_url" name="repo_clone_url"
          placeholder="https://github.com/owner/repo.git" required>
 
-  <label for="branch">Branch</label>
-  <input type="text" id="branch" name="branch" value="main" required>
+  <label for="branch">Branch <small>(optional — leave blank to use the repository's default branch)</small></label>
+  <input type="text" id="branch" name="branch" placeholder="main / master / …">
 
   <label for="commit_sha">Commit SHA <small>(optional — leave blank for latest on branch)</small></label>
   <input type="text" id="commit_sha" name="commit_sha"
