@@ -41,6 +41,7 @@ type Config struct {
 	TraefikImage       string        // Phase 6: Traefik Docker 이미지 (default "traefik:v3.1").
 	TraefikAPIPort     int           // Phase 7: Traefik API 호스트 포트 (default 9080, 0=비활성).
 	RouterReadyTimeout time.Duration // Phase 7: WaitTraefikRouters timeout (default 30s, 0=비활성).
+	GitHubToken        string        // HTTPS clone/fetch 용 PAT. 빈 값이면 인증 없음 (public repo 전용).
 }
 
 // ParseConfig 는 주어진 args 로부터 Config 를 만든다. args 는 os.Args[2:] 상당.
@@ -62,6 +63,7 @@ func ParseConfig(args []string) (Config, error) {
 		traefikImg     = fs.String("traefik-image", envOr("AGENT_TRAEFIK_IMAGE", "traefik:v3.1"), "Traefik Docker image")
 		traefikAPIPort = fs.Int("traefik-api-port", envInt("AGENT_TRAEFIK_API_PORT", 9080), "Traefik API host binding port (0 disables readiness probe)")
 		routerReady    = fs.String("router-ready-timeout", envOr("AGENT_ROUTER_READY_TIMEOUT", "30s"), "Traefik router readiness probe timeout (e.g. 30s, 0 disables)")
+		githubToken    = fs.String("github-token", os.Getenv("GITHUB_TOKEN"), "GitHub PAT for private repo HTTPS clone/fetch")
 	)
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -118,6 +120,7 @@ func ParseConfig(args []string) (Config, error) {
 		TraefikImage:       *traefikImg,
 		TraefikAPIPort:     *traefikAPIPort,
 		RouterReadyTimeout: rrt, // 0 허용 (probe 비활성).
+		GitHubToken:        *githubToken,
 	}, nil
 }
 

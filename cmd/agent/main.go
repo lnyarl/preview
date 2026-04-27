@@ -67,6 +67,10 @@ func runStart(args []string) error {
 
 	// Phase 6: MultiRepoCache — per-repoURL bare clone 디렉토리 관리 (결정 8).
 	cache := agent.NewMultiRepoCache(cfg.WorkDir, logger)
+	if cfg.GitHubToken != "" {
+		cache.SetToken(cfg.GitHubToken)
+		logger.Info("github_token_set")
+	}
 
 	docker, err := newSDKDockerClient()
 	if err != nil {
