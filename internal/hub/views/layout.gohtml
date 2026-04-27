@@ -14,11 +14,11 @@
         <li><strong>Preview Hub</strong></li>
       </ul>
       <ul>
-        <li><a href="/admin">Dashboard</a></li>
-        <li><a href="/admin/agents">Agents</a></li>
-        <li><a href="/admin/previews">Previews</a></li>
-        <li><a href="/admin/repos">Repos</a></li>
-        <li><a href="/admin/settings">Settings</a></li>
+        <li><a href="/admin"{{navActive .RequestPath "/admin"}}>Dashboard</a></li>
+        <li><a href="/admin/agents"{{navActive .RequestPath "/admin/agents"}}>Agents</a></li>
+        <li><a href="/admin/previews"{{navActive .RequestPath "/admin/previews"}}>Previews</a></li>
+        <li><a href="/admin/repos"{{navActive .RequestPath "/admin/repos"}}>Repos</a></li>
+        <li><a href="/admin/settings"{{navActive .RequestPath "/admin/settings"}}>Settings</a></li>
       </ul>
     </nav>
   </header>
