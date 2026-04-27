@@ -664,6 +664,17 @@ func boolToInt64(b bool) int64 {
 // 0 외 모든 값을 true 로 취급(데이터 손상 시 보수적으로 truthy 처리).
 func int64ToBool(n int64) bool { return n != 0 }
 
+// ListRepos 는 previews 테이블의 distinct repo_full_name 을 정렬 반환한다 (Phase 10 결정 14).
+// /admin/repos 인덱스 페이지가 repo_secrets 와 union 하기 위한 진입점.
+// SQL DISTINCT 로 DB 측에서 dedup → 메모리 폭주 회피 (R-4 완화의 사촌 정책).
+func (s *PreviewStore) ListRepos(ctx context.Context) ([]string, error) {
+	rows, err := s.q.ListPreviewRepos(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListRepos: %w", err)
+	}
+	return rows, nil
+}
+
 // GetActiveByRepoAndPR 는 같은 (repo, pr) 의 in-flight row 1건을 반환한다.
 // 상태 ∈ {queued, assigned, building, running} 중 가장 최근 created_at row.
 // 없으면 store.ErrNotFound. Phase 9 webhook synchronize 처리에서 Decision Matrix
