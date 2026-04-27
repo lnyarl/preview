@@ -37,10 +37,11 @@ func NewPreviewStore(db *sql.DB) *PreviewStore {
 // 컴파일 타임 인터페이스 만족 확인 (F-S1-6).
 var _ store.PreviewStore = (*PreviewStore)(nil)
 
-// Upsert 는 (repo_full_name, pr_number) 기준으로 INSERT or UPDATE.
+// Upsert 는 (repo_full_name, commit_sha) 기준으로 INSERT or UPDATE (Phase 9 자연키 변경).
 // 트랜잭션 안에서:
-//  1. 기존 row SELECT (없으면 NULL prev).
-//  2. UpsertPreview SQL 실행 (status 변경 없음).
+//  1. CommitSha 가 비어있지 않으면 기존 row SELECT (없으면 NULL prev). 빈 sha 면
+//     SQL 의 NULL UNIQUE 미발동 규칙으로 매번 신규 INSERT 가 보장되므로 사전 SELECT 스킵.
+//  2. UpsertPreview SQL 실행 (status / is_adhoc 갱신 없음).
 //  3. 신규 INSERT 면 preview_events(NULL→queued) 1행 INSERT.
 //
 // 결정 11(R1/R2): 신규=event 1건, 기존+status변경없음=event 0건. status 변경 분기는
@@ -63,23 +64,25 @@ func (s *PreviewStore) Upsert(ctx context.Context, p store.Preview) (created boo
 	}()
 	qtx := s.q.WithTx(tx)
 
-	// (1) 사전 SELECT — UPDATE/INSERT 분기 판단용.
-	existingRow, sErr := qtx.GetPreviewByRepoAndPR(ctx, GetPreviewByRepoAndPRParams{
-		RepoFullName: p.RepoFullName,
-		PrNumber:     int64(p.PrNumber),
-	})
+	// (1) 사전 SELECT — sha 가 비어있으면 항상 신규 INSERT 가 되므로 스킵.
 	var existing *store.Preview
-	switch {
-	case errors.Is(sErr, sql.ErrNoRows):
-		existing = nil
-	case sErr != nil:
-		return false, nil, fmt.Errorf("sqlite.Upsert: select existing: %w", sErr)
-	default:
-		converted, cErr := previewRowToDomain(existingRow)
-		if cErr != nil {
-			return false, nil, cErr
+	if p.CommitSha != "" {
+		existingRow, sErr := qtx.GetPreviewByRepoAndSha(ctx, GetPreviewByRepoAndShaParams{
+			RepoFullName: p.RepoFullName,
+			CommitSha:    nullStringFromCommitSha(p.CommitSha),
+		})
+		switch {
+		case errors.Is(sErr, sql.ErrNoRows):
+			existing = nil
+		case sErr != nil:
+			return false, nil, fmt.Errorf("sqlite.Upsert: select existing: %w", sErr)
+		default:
+			converted, cErr := previewRowToDomain(existingRow)
+			if cErr != nil {
+				return false, nil, cErr
+			}
+			existing = converted
 		}
-		existing = converted
 	}
 
 	// (2) UPSERT (sqlc).
@@ -94,10 +97,11 @@ func (s *PreviewStore) Upsert(ctx context.Context, p store.Preview) (created boo
 		ID:           p.ID,
 		RepoFullName: p.RepoFullName,
 		PrNumber:     int64(p.PrNumber),
-		CommitSha:    p.CommitSha,
+		CommitSha:    nullStringFromCommitSha(p.CommitSha),
 		Branch:       p.Branch,
 		Labels:       labelsJSON,
 		RepoCloneUrl: p.RepoCloneURL,
+		IsAdhoc:      boolToInt64(p.IsAdhoc),
 		CreatedAt:    createdAt,
 		UpdatedAt:    now,
 	}); err != nil {
@@ -151,11 +155,16 @@ func (s *PreviewStore) GetByID(ctx context.Context, id string) (*store.Preview, 
 // message 가 비어있지 않은 경우 message 를 error_message 로 동시에 채운다
 // (webhook handleClose 패턴과 호환).
 //
-// Phase 6: preview_urls 는 NOT NULL TEXT 컬럼(default '')이므로 sqlc 생성 파라미터
+// Phase 6: preview_urls 는 NOT NULL TEXT 컬럼(default ”)이므로 sqlc 생성 파라미터
 // 가 plain string 이다. fields.PreviewURLs 가 nil 일 때 ""를 전달하게 되며
-// COALESCE('', preview_urls) = '' 로 기존 값이 사실상 빈 문자열로 덮인다.
+// COALESCE(”, preview_urls) = ” 로 기존 값이 사실상 빈 문자열로 덮인다.
 // 따라서 PreviewURLs 를 보존하려면 호출자가 매번 명시적으로 fields.PreviewURLs
 // 를 채워야 한다(차후 step 에서 status_update.go 에서 일관 처리).
+//
+// Phase 9: fields.CommitSha != nil 일 때, 같은 트랜잭션 안에서 사전 SELECT 한 row 의
+// commit_sha 가 이미 다른 값으로 채워져 있으면 ErrShaConflict 반환. NULL 이면 신규
+// sha 로 채움(SQL COALESCE(commit_sha, ?) — NULL 일 때만 ? 가 적용). 같은 sha 이면
+// COALESCE 결과도 그대로(무해 통과).
 //
 // fromStatus="" 이면 CAS 비활성. fromStatus 가 비어있지 않은데 현재 row 의
 // status 와 다르면 ErrStaleState.
@@ -172,7 +181,7 @@ func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, 
 	}()
 	qtx := s.q.WithTx(tx)
 
-	// 사전 SELECT — preview 존재 + (옵션) fromStatus 일치 검증.
+	// 사전 SELECT — preview 존재 + (옵션) fromStatus 일치 검증 + (옵션) ErrShaConflict 검사.
 	row, err := qtx.GetPreviewByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -182,6 +191,11 @@ func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, 
 	}
 	if fromStatus != "" && row.Status != fromStatus {
 		return store.ErrStaleState
+	}
+	// Phase 9: ErrShaConflict 검사 — 이미 채워진 sha 와 다른 값이면 거부.
+	// 같은 BeginTx 내 SELECT → 비교 → UPDATE 순서로 race 회피 (NF-3).
+	if fields.CommitSha != nil && row.CommitSha.Valid && row.CommitSha.String != *fields.CommitSha {
+		return store.ErrShaConflict
 	}
 
 	nowStr := now.UTC().Format(iso8601)
@@ -214,6 +228,10 @@ func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, 
 	// assigned_agent_id 를 명시적으로 NULL 로 초기화하려면 별도 쿼리를 사용한다.
 	if fields.AssignedAgentID != nil && *fields.AssignedAgentID != "" {
 		params.AssignedAgentID = sql.NullString{String: *fields.AssignedAgentID, Valid: true}
+	}
+	// Phase 9: commit_sha 는 SQL COALESCE(commit_sha, ?) — NULL 일 때만 ? 적용.
+	if fields.CommitSha != nil {
+		params.CommitSha = nullStringFromCommitSha(*fields.CommitSha)
 	}
 	if _, err := qtx.UpdatePreviewStatusFields(ctx, params); err != nil {
 		return fmt.Errorf("sqlite.UpdateStatus: update: %w", err)
@@ -561,6 +579,10 @@ func (s *PreviewStore) ListPreviewEvents(ctx context.Context, previewID string, 
 }
 
 // previewRowToDomain 은 sqlc 생성 Preview row 를 store.Preview 도메인 객체로 변환한다.
+//
+// Phase 9 변환 규칙:
+//   - CommitSha: NullString → "" / 실제 값 (commitShaFromNullString 헬퍼).
+//   - IsAdhoc: int64(0/1) → bool (int64ToBool 헬퍼).
 func previewRowToDomain(r Preview) (*store.Preview, error) {
 	labels, err := decodeLabels(r.Labels)
 	if err != nil {
@@ -578,10 +600,11 @@ func previewRowToDomain(r Preview) (*store.Preview, error) {
 		ID:           r.ID,
 		RepoFullName: r.RepoFullName,
 		PrNumber:     int(r.PrNumber),
-		CommitSha:    r.CommitSha,
+		CommitSha:    commitShaFromNullString(r.CommitSha),
 		Branch:       r.Branch,
 		Status:       r.Status,
 		Labels:       labels,
+		IsAdhoc:      int64ToBool(r.IsAdhoc),
 		CreatedAt:    createdAt,
 		UpdatedAt:    updatedAt,
 	}
@@ -608,4 +631,53 @@ func previewRowToDomain(r Preview) (*store.Preview, error) {
 		p.ErrorMessage = &v
 	}
 	return p, nil
+}
+
+// nullStringFromCommitSha 는 도메인의 빈 문자열을 SQL NULL 로, 비어있지 않으면 valid 로
+// 매핑한다. SQLite UNIQUE 제약은 NULL 끼리 distinct 로 취급하므로(여러 NULL 공존 허용),
+// 빈 sha 의 다중 row 를 안전하게 INSERT 할 수 있다(Phase 9 결정 3).
+func nullStringFromCommitSha(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{Valid: false}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+// commitShaFromNullString 은 SQL NULL 을 도메인의 빈 문자열로, valid 면 그대로 반환한다.
+// nullStringFromCommitSha 와 1:1 대응 헬퍼.
+func commitShaFromNullString(ns sql.NullString) string {
+	if !ns.Valid {
+		return ""
+	}
+	return ns.String
+}
+
+// boolToInt64 는 SQLite 의 BOOLEAN(=INTEGER 0/1) 컬럼에 도메인 bool 을 넣기 위한 헬퍼.
+func boolToInt64(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// int64ToBool 는 SQLite INTEGER 0/1 을 도메인 bool 로 변환하는 헬퍼.
+// 0 외 모든 값을 true 로 취급(데이터 손상 시 보수적으로 truthy 처리).
+func int64ToBool(n int64) bool { return n != 0 }
+
+// GetActiveByRepoAndPR 는 같은 (repo, pr) 의 in-flight row 1건을 반환한다.
+// 상태 ∈ {queued, assigned, building, running} 중 가장 최근 created_at row.
+// 없으면 store.ErrNotFound. Phase 9 webhook synchronize 처리에서 Decision Matrix
+// Case B (기존 active 다른 sha → teardown) 분기 판정에 사용한다.
+func (s *PreviewStore) GetActiveByRepoAndPR(ctx context.Context, repoFullName string, prNumber int) (*store.Preview, error) {
+	row, err := s.q.GetActivePreviewByRepoAndPR(ctx, GetActivePreviewByRepoAndPRParams{
+		RepoFullName: repoFullName,
+		PrNumber:     int64(prNumber),
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, fmt.Errorf("sqlite.GetActiveByRepoAndPR: %w", err)
+	}
+	return previewRowToDomain(row)
 }

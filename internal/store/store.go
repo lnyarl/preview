@@ -44,11 +44,15 @@ type AgentStore interface {
 // Phase 6: PublicURL 제거. 대신 RepoCloneURL (webhook 에서 추출한 git clone URL)
 // 과 PreviewURLs (Agent 가 .preview.yml 기반으로 산출한 service→URL JSON 직렬화
 // 문자열) 를 도입한다 — non-nullable string, 기본값 "".
+//
+// Phase 9: 자연키가 (repo_full_name, commit_sha) 로 변경. CommitSha 는 빈 문자열이
+// SQLite 의 NULL 에 대응하며 (UNIQUE 미발동), 도메인 표현은 그대로 string 으로 유지한다.
+// IsAdhoc 은 webhook(false)/Admin Test Build(true) 진입점을 구분한다.
 type Preview struct {
 	ID              string
 	RepoFullName    string
 	PrNumber        int
-	CommitSha       string
+	CommitSha       string // 빈 문자열 = NULL (Phase 9 마이그레이션 후 nullable 컬럼)
 	Branch          string
 	Status          string
 	AssignedAgentID *string
@@ -59,6 +63,7 @@ type Preview struct {
 	PreviewURLs     string
 	Labels          []string
 	ErrorMessage    *string
+	IsAdhoc         bool // Phase 9: webhook=false, admin Test Build=true
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -73,6 +78,10 @@ type Preview struct {
 //
 // Phase 6: PublicURL 제거, PreviewURLs 도입. PreviewURLs 은 Agent 가 산출한
 // service→URL 매핑의 직렬화 문자열(현재 단계에서는 raw JSON 그대로 통과).
+//
+// Phase 9: CommitSha 추가 — Agent 가 worktree 의 git rev-parse HEAD 로 resolve 한
+// 실제 sha 를 hub 에 보고할 때 사용. nil=무변경, &"abc"=NULL 일 때만 채움 시도
+// (이미 채워진 sha 와 다른 값이면 ErrShaConflict 반환).
 type PreviewFields struct {
 	ContainerID     *string
 	AgentHost       *string
@@ -80,6 +89,7 @@ type PreviewFields struct {
 	PreviewURLs     *string
 	ErrorMessage    *string
 	AssignedAgentID *string
+	CommitSha       *string // Phase 9
 }
 
 // PreviewStore 는 previews + preview_events 두 테이블에 대한 이식성 있는 저장소 인터페이스.
@@ -144,6 +154,12 @@ type PreviewStore interface {
 	// ListPreviewEvents 는 preview detail 페이지의 timeline 렌더에 사용된다.
 	// (Phase 3 §5-12). created_at ASC, id ASC 로 정렬.
 	ListPreviewEvents(ctx context.Context, previewID string, limit, offset int) ([]PreviewEvent, error)
+
+	// GetActiveByRepoAndPR 은 같은 (repo, pr) 의 in-flight row 1건을 반환한다.
+	// 상태 ∈ {queued, assigned, building, running} 중 가장 최근 created_at row 만 매칭.
+	// 없으면 ErrNotFound. Phase 9 webhook synchronize 분기 (Decision Matrix Case B) 에서
+	// 기존 active 가 있는지 확인하기 위해 사용한다.
+	GetActiveByRepoAndPR(ctx context.Context, repoFullName string, prNumber int) (*Preview, error)
 }
 
 // PreviewEvent 는 preview_events 한 row 의 도메인 표현.
