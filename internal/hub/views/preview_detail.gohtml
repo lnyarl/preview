@@ -1,6 +1,6 @@
 {{define "content"}}
 <hgroup>
-  <h1>PR #{{.Preview.PrNumber}} — {{.Preview.RepoFullName}}</h1>
+  <h1>{{.Title}}</h1>
   <h2>Preview detail and timeline</h2>
 </hgroup>
 
@@ -8,13 +8,40 @@
   <article role="alert">{{.ConflictMessage}}</article>
 {{end}}
 
+{{if and (eq .Preview.Status "failed") .Diagnosis}}
+  <article role="alert">
+    <strong>실패 원인:</strong> {{.Diagnosis}}
+    {{if .Preview.ErrorMessage}}
+    <details style="margin-top:0.5em;">
+      <summary style="cursor:pointer; font-size:0.85em;">Raw error</summary>
+      <pre style="margin:0.4em 0 0; white-space:pre-wrap; word-break:break-all; font-size:0.8em;">{{.Preview.ErrorMessage}}</pre>
+    </details>
+    {{end}}
+  </article>
+{{end}}
+
 <section>
   <dl>
-    <dt>Status</dt><dd>{{.Preview.Status}}</dd>
-    <dt>Commit</dt><dd>{{.Preview.CommitSha}}</dd>
-    <dt>Branch</dt><dd>{{.Preview.Branch}}</dd>
+    <dt>Status</dt>
+    <dd>
+      {{if eq .Preview.Status "running"}}<mark>{{.Preview.Status}}</mark>
+      {{else if eq .Preview.Status "failed"}}<span style="color:var(--pico-color-red-500)">{{.Preview.Status}}</span>
+      {{else if eq .Preview.Status "done"}}<span style="color:var(--pico-color-green-500)">{{.Preview.Status}}</span>
+      {{else}}{{.Preview.Status}}
+      {{end}}
+    </dd>
+    <dt>Repo</dt><dd>{{.Preview.RepoFullName}}</dd>
+    <dt>Branch</dt><dd><code>{{.Preview.Branch}}</code></dd>
+    <dt>Commit</dt><dd><code>{{if .Preview.CommitSha}}{{.Preview.CommitSha}}{{else}}<em>not set</em>{{end}}</code></dd>
     <dt>Agent</dt><dd>{{.AgentLine}}</dd>
-    <dt>URLs</dt><dd>{{if .PreviewURLs}}{{range $name, $url := .PreviewURLs}}<a href="{{$url}}">{{$name}}</a> {{end}}{{else}}<em>not running</em>{{end}}</dd>
+    <dt>URLs</dt>
+    <dd>
+      {{if .PreviewURLs}}
+        {{range $name, $url := .PreviewURLs}}<a href="{{$url}}" target="_blank">{{$name}}</a> {{end}}
+      {{else}}
+        <em>not running</em>
+      {{end}}
+    </dd>
   </dl>
 </section>
 
@@ -33,17 +60,17 @@
     <table>
       <thead>
         <tr>
-          <th scope="col">Time</th>
-          <th scope="col">Transition</th>
+          <th scope="col" style="white-space:nowrap; width:14em;">Time</th>
+          <th scope="col" style="white-space:nowrap; width:14em;">Transition</th>
           <th scope="col">Message</th>
         </tr>
       </thead>
       <tbody>
       {{range .Events}}
         <tr>
-          <td>{{.TimeString}}</td>
-          <td>{{.FromString}} &rarr; {{.ToStatus}}</td>
-          <td>{{.Message}}</td>
+          <td style="white-space:nowrap; font-size:0.85em;">{{.TimeString}}</td>
+          <td style="white-space:nowrap;"><code>{{.FromString}}</code> &rarr; <code>{{.ToStatus}}</code></td>
+          <td style="font-size:0.85em; word-break:break-all;">{{.Message}}</td>
         </tr>
       {{end}}
       </tbody>
