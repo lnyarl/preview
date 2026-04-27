@@ -27,7 +27,7 @@
   <dl>
     <dt>Status</dt>
     <dd>{{statusBadge .Preview.Status}}</dd>
-    <dt>Repo</dt><dd>{{.Preview.RepoFullName}}</dd>
+    <dt>Repo</dt><dd><a href="/admin/previews?repo={{.Preview.RepoFullName}}">{{.Preview.RepoFullName}}</a></dd>
     <dt>Branch</dt><dd><code>{{.Preview.Branch}}</code></dd>
     <dt>Commit</dt><dd><code>{{if .Preview.CommitSha}}{{.Preview.CommitSha}}{{else}}<em>not set</em>{{end}}</code></dd>
     <dt>Source</dt><dd>{{if .Preview.IsAdhoc}}Adhoc (manual){{else}}Webhook{{end}}</dd>
