@@ -74,6 +74,9 @@ func (f *syncFakePreviewStore) ListPreviewEvents(_ context.Context, _ string, _,
 func (f *syncFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
 	return nil, store.ErrNotFound
 }
+func (f *syncFakePreviewStore) FindAdhocByBranch(_ context.Context, _, _ string) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
 func (f *syncFakePreviewStore) ListRepos(_ context.Context) ([]string, error) { return nil, nil }
 
 // fakeTeardownSender 는 SendTeardown 호출을 capture.

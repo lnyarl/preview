@@ -159,6 +159,11 @@ func (f *fakePreviewStore) GetActiveByRepoAndPR(_ context.Context, repoFullName 
 	return best, nil
 }
 
+// Phase 11: webhook 테스트는 dedup 분기에 관여하지 않으므로 stub.
+func (f *fakePreviewStore) FindAdhocByBranch(_ context.Context, _, _ string) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
+
 func (f *fakePreviewStore) ListRepos(_ context.Context) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

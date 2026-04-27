@@ -67,6 +67,9 @@ func (f *dispFakePreviewStore) ListPreviewEvents(ctx context.Context, previewID 
 func (f *dispFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
 	return nil, store.ErrNotFound
 }
+func (f *dispFakePreviewStore) FindAdhocByBranch(_ context.Context, _, _ string) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
 func (f *dispFakePreviewStore) ListRepos(_ context.Context) ([]string, error) { return nil, nil }
 
 // fakeAgentStore — GetByID 만 사용.
@@ -262,6 +265,9 @@ func (f *raceFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int)
 	return nil, nil
 }
 func (f *raceFakeStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
+func (f *raceFakeStore) FindAdhocByBranch(_ context.Context, _, _ string) (*store.Preview, error) {
 	return nil, store.ErrNotFound
 }
 func (f *raceFakeStore) ListRepos(_ context.Context) ([]string, error) { return nil, nil }

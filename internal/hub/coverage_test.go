@@ -170,6 +170,9 @@ func (f *statusFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ in
 func (f *statusFakeStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
 	return nil, store.ErrNotFound
 }
+func (f *statusFakeStore) FindAdhocByBranch(_ context.Context, _, _ string) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
 func (f *statusFakeStore) ListRepos(_ context.Context) ([]string, error) { return nil, nil }
 
 func TestStatusUpdaterOnStatusUpdate(t *testing.T) {

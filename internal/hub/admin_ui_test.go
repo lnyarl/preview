@@ -201,6 +201,27 @@ func (f *adminUIFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ stri
 	return nil, store.ErrNotFound
 }
 
+// Phase 11: FindAdhocByBranch — testBuildSubmit dedup 분기 테스트가 자체 fake 로
+// override 하지 않는 한 기본 stub 은 ErrNotFound 반환 (= dedup miss → 기존 신규 INSERT 경로).
+func (f *adminUIFakePreviewStore) FindAdhocByBranch(_ context.Context, repoFullName, branch string) (*store.Preview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var best *store.Preview
+	for _, p := range f.rows {
+		if !p.IsAdhoc || p.RepoFullName != repoFullName || p.Branch != branch {
+			continue
+		}
+		if best == nil || p.CreatedAt.After(best.CreatedAt) {
+			cp := *p
+			best = &cp
+		}
+	}
+	if best == nil {
+		return nil, store.ErrNotFound
+	}
+	return best, nil
+}
+
 // Phase 10: ListRepos stub — admin UI 테스트는 /admin/repos 인덱스 union 동작을 별도로 검증.
 func (f *adminUIFakePreviewStore) ListRepos(_ context.Context) ([]string, error) {
 	f.mu.Lock()
