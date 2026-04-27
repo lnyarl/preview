@@ -181,7 +181,6 @@ function cp(btn) {
             <pre><code>./agent start \
   --hub-url=ws://{{.HubHost}}/agent/ws \
   --token={{.Token}} \
-  --repo-url=https://github.com/owner/repo.git \
   --advertise-host=$(hostname -I | awk '{print $1}')</code></pre>
           </div>
           <p><small>💡 <code>--advertise-host</code>: Hub가 컨테이너에 접속할 때 쓰는 이 머신의 IP. 자동 감지가 안 되면 직접 입력하세요.</small></p>
@@ -209,7 +208,6 @@ function cp(btn) {
             <pre><code>./agent start \
   --hub-url=ws://{{.HubHost}}/agent/ws \
   --token={{.Token}} \
-  --repo-url=https://github.com/owner/repo.git \
   --advertise-host=$(ipconfig getifaddr en0)</code></pre>
           </div>
           <p><small>💡 Wi-Fi가 아닌 경우 <code>en0</code>을 <code>en1</code> 등으로 변경하거나 IP를 직접 입력하세요.</small></p>
@@ -235,7 +233,6 @@ function cp(btn) {
 .\agent.exe start `
   --hub-url=ws://{{.HubHost}}/agent/ws `
   --token={{.Token}} `
-  --repo-url=https://github.com/owner/repo.git `
   --advertise-host=$IP</code></pre>
           </div>
         </section>
