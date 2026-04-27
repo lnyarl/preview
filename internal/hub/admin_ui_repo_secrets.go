@@ -22,9 +22,10 @@ import (
 
 // reposIndexView 는 /admin/repos 의 렌더 모델.
 type reposIndexView struct {
-	Title string
-	Rows  []repoRow
-	Error string
+	Title       string
+	RequestPath string // Phase 12: layout nav active 매칭용 (r.URL.Path).
+	Rows        []repoRow
+	Error       string
 }
 
 // repoRow 는 인덱스 표 한 행 (결정 14).
@@ -37,6 +38,7 @@ type repoRow struct {
 // repoSecretsView 는 /admin/repos/{owner}/{repo}/secrets 의 렌더 모델.
 type repoSecretsView struct {
 	Title           string
+	RequestPath     string // Phase 12: layout nav active 매칭용 (r.URL.Path).
 	RepoFullName    string
 	OwnerSegment    string
 	RepoSegment     string
@@ -52,7 +54,7 @@ type repoSecretsView struct {
 // reposIndex 는 GET /admin/repos 핸들러.
 // previews + repo_secrets 의 union 을 정렬해 secret 카운트와 함께 표시한다 (결정 14).
 func (h *AdminUIHandler) reposIndex(w http.ResponseWriter, r *http.Request) {
-	view := reposIndexView{Title: "Repositories"}
+	view := reposIndexView{Title: "Repositories", RequestPath: r.URL.Path}
 
 	all := map[string]struct{}{}
 	if h.PreviewStore != nil {
@@ -127,6 +129,7 @@ func (h *AdminUIHandler) repoSecretsGet(w http.ResponseWriter, r *http.Request) 
 
 	view := repoSecretsView{
 		Title:        "Secrets: " + repoFullName,
+		RequestPath:  r.URL.Path,
 		RepoFullName: repoFullName,
 		OwnerSegment: strings.ToLower(owner),
 		RepoSegment:  strings.ToLower(repo),
@@ -172,6 +175,7 @@ func (h *AdminUIHandler) repoSecretsPost(w http.ResponseWriter, r *http.Request)
 
 	view := repoSecretsView{
 		Title:        "Secrets: " + repoFullName,
+		RequestPath:  r.URL.Path,
 		RepoFullName: repoFullName,
 		OwnerSegment: strings.ToLower(owner),
 		RepoSegment:  strings.ToLower(repo),

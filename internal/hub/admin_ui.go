@@ -237,6 +237,7 @@ func (h *AdminUIHandler) renderHTML(w http.ResponseWriter, status int, page stri
 
 type dashboardView struct {
 	Title           string
+	RequestPath     string // Phase 12: layout nav active 매칭용 (r.URL.Path).
 	TotalAgents     int
 	OnlineAgents    int
 	RunningPreviews int
@@ -284,6 +285,7 @@ func (h *AdminUIHandler) dashboard(w http.ResponseWriter, r *http.Request) {
 		QueuedPreviews:  counts["queued"],
 		StatusCounts:    counts,
 	}
+	view.RequestPath = r.URL.Path
 	h.renderHTML(w, http.StatusOK, "dashboard.gohtml", view)
 }
 
@@ -299,9 +301,10 @@ type agentRow struct {
 }
 
 type agentsView struct {
-	Title  string
-	Agents []agentRow
-	Error  string
+	Title       string
+	RequestPath string // Phase 12: layout nav active 매칭용 (r.URL.Path).
+	Agents      []agentRow
+	Error       string
 }
 
 // AgentsList 는 GET /admin/agents 의 SSR 핸들러. AdminHandler 가 Accept-header 분기에서
@@ -314,7 +317,7 @@ func (h *AdminUIHandler) agentsList(w http.ResponseWriter, r *http.Request) {
 	agents, err := h.AgentStore.List(r.Context())
 	if err != nil {
 		h.renderHTML(w, http.StatusInternalServerError, "agents.gohtml",
-			agentsView{Title: "Agents", Error: err.Error()})
+			agentsView{Title: "Agents", RequestPath: r.URL.Path, Error: err.Error()})
 		return
 	}
 	rows := make([]agentRow, 0, len(agents))
@@ -342,7 +345,7 @@ func (h *AdminUIHandler) agentsList(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	h.renderHTML(w, http.StatusOK, "agents.gohtml",
-		agentsView{Title: "Agents", Agents: rows})
+		agentsView{Title: "Agents", RequestPath: r.URL.Path, Agents: rows})
 }
 
 // labelsToString 은 라벨 슬라이스를 ", " 로 join 한 표시용 문자열로 변환한다.
@@ -409,6 +412,7 @@ func (h *AdminUIHandler) CreateAgentForm(w http.ResponseWriter, r *http.Request)
 
 type tokenView struct {
 	Title            string
+	RequestPath      string // Phase 12: layout nav active 매칭용 (r.URL.Path).
 	Name             string
 	Token            string
 	HubHost          string // e.g. "localhost:3000" — Agent 실행 명령에 사용
@@ -428,7 +432,8 @@ func (h *AdminUIHandler) agentToken(w http.ResponseWriter, r *http.Request) {
 		host = "localhost:3000"
 	}
 	h.renderHTML(w, http.StatusOK, "token.gohtml",
-		tokenView{Title: "Agent Setup", Name: name, Token: tok, HubHost: host,
+		tokenView{Title: "Agent Setup", RequestPath: r.URL.Path,
+			Name: name, Token: tok, HubHost: host,
 			AgentDownloadURL: h.AgentDownloadURL})
 }
 
@@ -456,10 +461,11 @@ func (h *AdminUIHandler) agentDelete(w http.ResponseWriter, r *http.Request) {
 // ---------- Test Build ----------
 
 type testBuildView struct {
-	Title     string
-	AgentID   string
-	AgentName string
-	Error     string
+	Title       string
+	RequestPath string // Phase 12: layout nav active 매칭용 (r.URL.Path).
+	AgentID     string
+	AgentName   string
+	Error       string
 }
 
 func (h *AdminUIHandler) testBuildForm(w http.ResponseWriter, r *http.Request) {
@@ -474,7 +480,8 @@ func (h *AdminUIHandler) testBuildForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.renderHTML(w, http.StatusOK, "test_build.gohtml",
-		testBuildView{Title: "Test Build", AgentID: id, AgentName: a.Name})
+		testBuildView{Title: "Test Build", RequestPath: r.URL.Path,
+			AgentID: id, AgentName: a.Name})
 }
 
 // testBuildSubmit 은 Admin Test Build 폼 POST 핸들러.
@@ -510,7 +517,8 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 			name = a.Name
 		}
 		h.renderHTML(w, http.StatusBadRequest, "test_build.gohtml",
-			testBuildView{Title: "Test Build", AgentID: id, AgentName: name,
+			testBuildView{Title: "Test Build", RequestPath: r.URL.Path,
+				AgentID: id, AgentName: name,
 				Error: "invalid repo URL: " + err.Error()})
 		return
 	}
@@ -691,9 +699,10 @@ type previewsFilter struct {
 }
 
 type previewsView struct {
-	Title    string
-	Previews []previewRow
-	Filter   previewsFilter
+	Title       string
+	RequestPath string // Phase 12: layout nav active 매칭용 (r.URL.Path).
+	Previews    []previewRow
+	Filter      previewsFilter
 }
 
 // PreviewsList 는 GET /admin/previews 의 SSR 핸들러. WebhookHandler 가 Accept-header
@@ -741,9 +750,10 @@ func (h *AdminUIHandler) previewsList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	h.renderHTML(w, http.StatusOK, "previews.gohtml", previewsView{
-		Title:    "Previews",
-		Previews: rows,
-		Filter:   previewsFilter{Repo: repoFilter, Status: statusFilter},
+		Title:       "Previews",
+		RequestPath: r.URL.Path,
+		Previews:    rows,
+		Filter:      previewsFilter{Repo: repoFilter, Status: statusFilter},
 	})
 }
 
@@ -769,6 +779,7 @@ type previewDetailRow struct {
 
 type previewDetailView struct {
 	Title           string
+	RequestPath     string // Phase 12: layout nav active 매칭용 (r.URL.Path).
 	Preview         previewDetailRow
 	AgentLine       string
 	PreviewURLs     map[string]string // Phase 6: service → URL (parsed from JSON)
@@ -901,7 +912,8 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		title = fmt.Sprintf("Test Build — %s", p.RepoFullName)
 	}
 	view := previewDetailView{
-		Title: title,
+		Title:       title,
+		RequestPath: r.URL.Path,
 		Preview: previewDetailRow{
 			ID:           p.ID,
 			PrNumber:     p.PrNumber,
@@ -1049,6 +1061,7 @@ func (h *AdminUIHandler) triggerDispatch(ctx context.Context) {
 // agentDetailView 는 GET /admin/agents/{id} 의 렌더 모델.
 type agentDetailView struct {
 	Title          string
+	RequestPath    string // Phase 12: layout nav active 매칭용 (r.URL.Path).
 	AgentID        string
 	Name           string
 	Status         string
@@ -1077,6 +1090,7 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	view := agentDetailView{
 		Title:         "Agent " + a.Name,
+		RequestPath:   r.URL.Path,
 		AgentID:       a.ID,
 		Name:          a.Name,
 		Status:        a.Status,
@@ -1091,6 +1105,7 @@ func (h *AdminUIHandler) agentDetail(w http.ResponseWriter, r *http.Request) {
 
 type settingsView struct {
 	Title             string
+	RequestPath       string // Phase 12: layout nav active 매칭용 (r.URL.Path).
 	WebhookURL        string
 	WebhookSecret     string
 	PreviewBaseDomain string
@@ -1106,6 +1121,7 @@ func (h *AdminUIHandler) settings(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	view := settingsView{
 		Title:             "Settings",
+		RequestPath:       r.URL.Path,
 		WebhookURL:        scheme + "://" + host + "/webhooks/github",
 		WebhookSecret:     h.cfg.WebhookSecret,
 		PreviewBaseDomain: h.cfg.PreviewBaseDomain,
