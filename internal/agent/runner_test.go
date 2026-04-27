@@ -154,8 +154,10 @@ func (h *runnerFakeHub) lastUpdate() protocol.StatusUpdateData {
 // worktreeFileRunner 는 worktree add 시 .preview.yml + build 파일을 생성한다.
 // mode: "dockerfile" | "compose" | "no_build" | "no_config".
 type worktreeFileRunner struct {
-	base *fakeRunner
-	mode string
+	base         *fakeRunner
+	mode         string
+	mu           sync.Mutex
+	lastWorktree string // 가장 최근 worktree add 경로 (Phase 10 .env 검증용)
 }
 
 func (w *worktreeFileRunner) Run(ctx context.Context, name string, args ...string) error {
@@ -174,6 +176,9 @@ func (w *worktreeFileRunner) Run(ctx context.Context, name string, args ...strin
 		if path == "" {
 			return nil
 		}
+		w.mu.Lock()
+		w.lastWorktree = path
+		w.mu.Unlock()
 		if w.mode != "no_config" {
 			_ = os.WriteFile(filepath.Join(path, ".preview.yml"), []byte(previewYml), 0o644)
 		}
@@ -187,6 +192,13 @@ func (w *worktreeFileRunner) Run(ctx context.Context, name string, args ...strin
 		}
 	}
 	return nil
+}
+
+// worktreePath 는 가장 최근 worktree add 경로를 반환한다 (Phase 10 .env 검증 helper).
+func (w *worktreeFileRunner) worktreePath() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.lastWorktree
 }
 func (w *worktreeFileRunner) Output(ctx context.Context, name string, args ...string) (string, error) {
 	return w.base.Output(ctx, name, args...)
@@ -595,6 +607,79 @@ func TestRunnerSendsBuildingTwiceWithSha(t *testing.T) {
 	}
 	if !revParseCalled {
 		t.Errorf("git rev-parse HEAD not called: %+v", cmd.outCalls)
+	}
+}
+
+// newRunnerSetupWithWorktree 는 newRunnerSetup 과 동일하지만 worktreeFileRunner 도 함께 반환한다.
+// Phase 10 의 .env 파일 검증 (F-25) 에 worktree 경로가 필요해 추가됐다.
+func newRunnerSetupWithWorktree(t *testing.T, mode string) (*Runner, *fakeDocker, *fakeCmd, *runnerFakeHub, *worktreeFileRunner) {
+	t.Helper()
+	root := t.TempDir()
+	multiCache := NewMultiRepoCache(root, nil)
+
+	rc := NewRepoCache(root, testRepoURL, nil)
+	base := &fakeRunner{revParseOK: true}
+	wfr := &worktreeFileRunner{base: base, mode: mode}
+	rc.SetRunner(wfr)
+	multiCache.mu.Lock()
+	multiCache.repos[testRepoURL] = rc
+	multiCache.mu.Unlock()
+
+	docker := &fakeDocker{}
+	hub := &runnerFakeHub{}
+	cmd := &fakeCmd{}
+	runner := NewRunner(docker, multiCache, cmd, hub, "127.0.0.1", nil)
+	return runner, docker, cmd, hub, wfr
+}
+
+// TestRunnerWritesDotenv (F-22, F-25): BuildEnv 가 있을 때 worktree 루트에 .env 가 작성되며
+// 권한 0600, KEY 정렬, KEY=VALUE\n 형식.
+func TestRunnerWritesDotenv(t *testing.T) {
+	runner, _, _, hub, wfr := newRunnerSetupWithWorktree(t, "compose")
+	ctx := context.Background()
+
+	msg := protocol.JobAssignData{
+		PreviewID: "p1", RepoURL: testRepoURL, CommitSHA: "abc",
+		BuildEnv: map[string]string{
+			"DATABASE_URL": "postgres://app:pw@db/x",
+			"API_KEY":      "k1",
+		},
+	}
+	if err := runner.Handle(ctx, msg); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	wt := wfr.worktreePath()
+	if wt == "" {
+		t.Fatal("worktree path empty — worktreeFileRunner did not capture")
+	}
+	dotenvPath := filepath.Join(wt, ".env")
+	got, err := os.ReadFile(dotenvPath)
+	if err != nil {
+		t.Fatalf("ReadFile .env: %v", err)
+	}
+	want := "API_KEY=k1\nDATABASE_URL=postgres://app:pw@db/x\n"
+	if string(got) != want {
+		t.Fatalf("dotenv mismatch\nwant: %q\ngot:  %q", want, string(got))
+	}
+	// 빌드가 running 까지 도달했는지 (BuildEnv 가 흐름을 막지 않음).
+	statuses := hub.statuses()
+	if statuses[len(statuses)-1] != "running" {
+		t.Errorf("last status=%s want running", statuses[len(statuses)-1])
+	}
+}
+
+// TestRunnerNoBuildEnvSkipsDotenv (F-23): BuildEnv 가 nil 일 때 .env 파일 미생성.
+func TestRunnerNoBuildEnvSkipsDotenv(t *testing.T) {
+	runner, _, _, _, wfr := newRunnerSetupWithWorktree(t, "compose")
+	ctx := context.Background()
+
+	if err := runner.Handle(ctx, testMsg("p1")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	wt := wfr.worktreePath()
+	if _, err := os.Stat(filepath.Join(wt, ".env")); !os.IsNotExist(err) {
+		t.Fatalf(".env should not exist when BuildEnv is nil; stat err=%v", err)
 	}
 }
 

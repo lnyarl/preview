@@ -193,6 +193,18 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	}
 	checkedOutWorktree = worktree
 
+	// (2.5) Phase 10: BuildEnv 가 비어있지 않으면 worktree 루트에 .env 작성 (결정 5/10).
+	// 실패해도 빌드 자체를 막지 않는다 — WARN 만 남기고 진행 (결정 9 정책의 agent 측 사촌).
+	// 실패해도 docker compose 가 자체 에러로 fail 시 STATUS_UPDATE failed 로 운영자에 노출.
+	dotenvPath := filepath.Join(worktree, ".env")
+	if derr := WriteDotenv(dotenvPath, msg.BuildEnv); derr != nil {
+		r.logger.Warn("agent_dotenv_write_failed",
+			"preview_id", pid, "path", dotenvPath, "err", derr.Error())
+	} else if len(msg.BuildEnv) > 0 {
+		r.logger.Info("agent_dotenv_wrote",
+			"preview_id", pid, "path", dotenvPath, "n_keys", len(msg.BuildEnv))
+	}
+
 	// (2b) 두 번째 building 송신 — sha 동봉 (Phase 9 결정 5).
 	// worktree HEAD 의 git rev-parse 로 실제 sha 추출. 빈 message 로 보내 첫 번째 message
 	// 를 덮어쓰지 않게 한다(store 가 빈 message 를 무변경 처리). resolve 실패해도 빌드 중단하지
