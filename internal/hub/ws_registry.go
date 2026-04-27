@@ -105,17 +105,20 @@ func NewWSJobSender(reg *ConnRegistry) *WSJobSender {
 
 // SendJobAssign 은 agentID 의 WS 에 JOB_ASSIGN envelope 를 송신한다.
 // 미연결 agent 는 에러. 호출자는 로그 후 무시 (Claim 은 이미 성공이므로 reconciler 가 회수).
-func (s *WSJobSender) SendJobAssign(ctx context.Context, agentID string, p store.Preview) error {
+//
+// Phase 10: env 인자 추가 — dispatcher 가 RepoSecrets.List 로 hydrate 한 build secrets.
+// nil/빈 map 은 JobAssignData.BuildEnv 미설정 (omitempty).
+func (s *WSJobSender) SendJobAssign(ctx context.Context, agentID string, p store.Preview, env map[string]string) error {
 	c := s.Registry.connFor(agentID)
 	if c == nil {
 		return fmt.Errorf("ws_job_sender: agent %s not connected", agentID)
 	}
-	data := JobAssignFromPreview(p)
-	env, err := protocol.NewEnvelope(protocol.TypeJobAssign, data)
+	data := JobAssignFromPreview(p, env)
+	envelope, err := protocol.NewEnvelope(protocol.TypeJobAssign, data)
 	if err != nil {
 		return fmt.Errorf("ws_job_sender: envelope: %w", err)
 	}
-	b, err := json.Marshal(env)
+	b, err := json.Marshal(envelope)
 	if err != nil {
 		return fmt.Errorf("ws_job_sender: marshal: %w", err)
 	}

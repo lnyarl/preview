@@ -205,6 +205,11 @@ func (h *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase 10 결정 15 / R-8: GitHub repo full_name 의 case 를 lowercase 로 정규화한다.
+	// 이렇게 하면 dispatcher hydration 의 RepoSecrets.List 키 매칭이 silent failure 없이
+	// 작동하며, /admin/repos 인덱스가 case 만 다른 중복 행을 만들지 않는다.
+	p.Repository.FullName = strings.ToLower(p.Repository.FullName)
+
 	switch p.Action {
 	case "opened", "synchronize", "reopened":
 		h.handleUpsert(w, r.Context(), p, prNum)
