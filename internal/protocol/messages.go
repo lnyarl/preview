@@ -94,6 +94,11 @@ type JobAssignData struct {
 
 // StatusUpdateData 는 Agent 가 building → running → done|failed 전이 시
 // Hub 로 보내는 본문. nullable 필드는 포인터로 명시(빈 값 set 과 미설정 구분).
+//
+// Phase 9: CommitSHA 추가. Agent 는 첫 building 메시지에서 nil 로 보내고, Checkout
+// 직후 worktree HEAD 의 git rev-parse 로 resolve 한 sha 를 두 번째 building 메시지에서
+// 동봉해 hub 에 보고한다(§5-9). Hub 는 PreviewFields.CommitSha 를 통해 row 의
+// commit_sha 가 NULL 일 때만 채워 넣는다(이미 채워진 다른 sha 면 ErrShaConflict + WARN).
 type StatusUpdateData struct {
 	PreviewID    string            `json:"preview_id"`
 	Status       string            `json:"status"`
@@ -103,6 +108,7 @@ type StatusUpdateData struct {
 	AgentPort    *int              `json:"agent_port,omitempty"`
 	ErrorMessage *string           `json:"error_message,omitempty"`
 	PreviewURLs  map[string]string `json:"preview_urls,omitempty"` // Phase 6: service → URL
+	CommitSHA    *string           `json:"commit_sha,omitempty"`   // Phase 9: Agent 의 worktree HEAD resolve 결과
 }
 
 // JobTeardownData 는 Hub 가 PR closed 등으로 컨테이너 정리를 요청할 때 송신.

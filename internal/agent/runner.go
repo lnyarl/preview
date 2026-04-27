@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,7 +42,7 @@ type runningJob struct {
 	previewID    string
 	containerID  string // Dockerfile 모드 전용. compose 모드에서는 비어있음.
 	host         string
-	port         int    // Traefik 호스트 포트 (preview 접근 진입점).
+	port         int // Traefik 호스트 포트 (preview 접근 진입점).
 	worktreePath string
 	repoURL      string
 	buildMode    string // buildModeCompose 또는 buildModeDockerfile.
@@ -52,15 +53,15 @@ type runningJob struct {
 type Runner struct {
 	docker             DockerClient
 	cache              *MultiRepoCache
-	cmd                CmdRunner     // docker compose 명령 실행용 (Phase 6).
+	cmd                CmdRunner // docker compose 명령 실행용 (Phase 6).
 	hub                HubSender
 	advHost            string
 	traefikPort        int           // Traefik 웹 호스트 포트 (Phase 6, default 8080).
 	traefikAPIPort     int           // Phase 7: Traefik API 호스트 포트 (default 9080, 0=비활성).
 	routerReadyTimeout time.Duration // Phase 7: WaitTraefikRouters timeout (default 30s, 0=비활성).
 	logger             *slog.Logger
-	ready              ReadySender   // Phase 5: READY 송신 의존 (nil 허용 = no-op).
-	maxJobs            int           // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
+	ready              ReadySender // Phase 5: READY 송신 의존 (nil 허용 = no-op).
+	maxJobs            int         // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
 
 	jobs     sync.Map    // previewID -> *runningJob
 	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
@@ -153,10 +154,14 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	defer func() { r.inFlight.Add(-1); r.maybeSendReady(ctx) }()
 	r.logger.Info("agent_job_assign", "preview_id", pid, "repo_url", msg.RepoURL, "sha", msg.CommitSHA)
 
-	// (1) building 송신.
+	// (1) 첫 번째 building 송신 — assigned → building 즉시 전이.
+	// 이 메시지가 Checkout(수십 초 가능) 전에 가야 reconciler 의 staleAssigned 회수 race 를
+	// 회피한다(Phase 9 결정 5). sha 는 아직 모름 → nil.
 	if err := r.hub.SendStatusUpdate(ctx, protocol.StatusUpdateData{
 		PreviewID: pid,
 		Status:    "building",
+		Message:   "checkout_started",
+		CommitSHA: nil,
 	}); err != nil {
 		r.logger.Warn("status_update_building_failed", "preview_id", pid, "err", err.Error())
 	}
@@ -172,6 +177,29 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	worktree, err := r.cache.Checkout(ctx, msg.RepoURL, pid, msg.CommitSHA, msg.Branch)
 	if err != nil {
 		return r.fail(ctx, pid, "repocache_checkout", err)
+	}
+
+	// (2b) 두 번째 building 송신 — sha 동봉 (Phase 9 결정 5).
+	// worktree HEAD 의 git rev-parse 로 실제 sha 추출. 빈 message 로 보내 첫 번째 message
+	// 를 덮어쓰지 않게 한다(store 가 빈 message 를 무변경 처리). resolve 실패해도 빌드 중단하지
+	// 않음(NF-8) — 단순히 sha=nil 로 보내 hub row 의 commit_sha 는 NULL 유지.
+	resolvedSha := ""
+	if out, gerr := r.cmd.Output(ctx, "git", "-C", worktree, "rev-parse", "HEAD"); gerr == nil {
+		resolvedSha = strings.TrimSpace(out)
+	} else {
+		r.logger.Warn("rev_parse_head_failed", "preview_id", pid, "err", gerr.Error())
+	}
+	var shaPtr *string
+	if resolvedSha != "" {
+		shaPtr = &resolvedSha
+	}
+	if err := r.hub.SendStatusUpdate(ctx, protocol.StatusUpdateData{
+		PreviewID: pid,
+		Status:    "building", // 자기-루프 전이 (building → building)
+		Message:   "",         // 빈 message → store 단계에서 무변경 처리, 첫 message 보존
+		CommitSHA: shaPtr,
+	}); err != nil {
+		r.logger.Warn("status_update_building_sha_failed", "preview_id", pid, "err", err.Error())
 	}
 
 	// (3) .preview.yml 로드.
