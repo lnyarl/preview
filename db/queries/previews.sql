@@ -98,3 +98,11 @@ LIMIT ? OFFSET ?;
 SELECT DISTINCT repo_full_name
 FROM previews
 ORDER BY repo_full_name;
+
+-- name: GetAdhocPreviewByBranch :one
+SELECT * FROM previews
+WHERE repo_full_name = ?
+  AND branch = ?
+  AND is_adhoc = 1
+ORDER BY created_at DESC
+LIMIT 1;
