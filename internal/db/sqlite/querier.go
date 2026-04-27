@@ -14,10 +14,12 @@ type Querier interface {
 	CreateAgent(ctx context.Context, arg CreateAgentParams) error
 	DeleteAgent(ctx context.Context, id string) error
 	FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error)
+	GetActivePreviewByRepoAndPR(ctx context.Context, arg GetActivePreviewByRepoAndPRParams) (Preview, error)
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
 	GetAgentByName(ctx context.Context, name string) (Agent, error)
 	GetPreviewByID(ctx context.Context, id string) (Preview, error)
 	GetPreviewByRepoAndPR(ctx context.Context, arg GetPreviewByRepoAndPRParams) (Preview, error)
+	GetPreviewByRepoAndSha(ctx context.Context, arg GetPreviewByRepoAndShaParams) (Preview, error)
 	InsertPreviewEvent(ctx context.Context, arg InsertPreviewEventParams) error
 	ListAgents(ctx context.Context) ([]Agent, error)
 	ListAllPreviews(ctx context.Context) ([]Preview, error)

@@ -22,7 +22,7 @@ type Preview struct {
 	ID              string         `json:"id"`
 	RepoFullName    string         `json:"repo_full_name"`
 	PrNumber        int64          `json:"pr_number"`
-	CommitSha       string         `json:"commit_sha"`
+	CommitSha       sql.NullString `json:"commit_sha"`
 	Branch          string         `json:"branch"`
 	Status          string         `json:"status"`
 	AssignedAgentID sql.NullString `json:"assigned_agent_id"`
@@ -35,6 +35,7 @@ type Preview struct {
 	UpdatedAt       string         `json:"updated_at"`
 	RepoCloneUrl    string         `json:"repo_clone_url"`
 	PreviewUrls     string         `json:"preview_urls"`
+	IsAdhoc         int64          `json:"is_adhoc"`
 }
 
 type PreviewEvent struct {

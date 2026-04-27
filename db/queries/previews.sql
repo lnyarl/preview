@@ -1,11 +1,11 @@
 -- name: UpsertPreview :one
 INSERT INTO previews (
   id, repo_full_name, pr_number, commit_sha, branch,
-  status, labels, repo_clone_url, created_at, updated_at
+  status, labels, repo_clone_url, is_adhoc, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
-ON CONFLICT(repo_full_name, pr_number) DO UPDATE SET
-  commit_sha = EXCLUDED.commit_sha,
+VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+ON CONFLICT(repo_full_name, commit_sha) DO UPDATE SET
+  pr_number = EXCLUDED.pr_number,
   branch = EXCLUDED.branch,
   labels = EXCLUDED.labels,
   repo_clone_url = EXCLUDED.repo_clone_url,
@@ -17,6 +17,16 @@ SELECT * FROM previews WHERE id = ?;
 
 -- name: GetPreviewByRepoAndPR :one
 SELECT * FROM previews WHERE repo_full_name = ? AND pr_number = ?;
+
+-- name: GetActivePreviewByRepoAndPR :one
+SELECT * FROM previews
+WHERE repo_full_name = ? AND pr_number = ?
+  AND status IN ('queued','assigned','building','running')
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: GetPreviewByRepoAndSha :one
+SELECT * FROM previews WHERE repo_full_name = ? AND commit_sha = ?;
 
 -- name: UpdatePreviewStatus :exec
 UPDATE previews
@@ -32,7 +42,8 @@ SET status = ?,
     agent_port = COALESCE(?, agent_port),
     preview_urls = COALESCE(?, preview_urls),
     error_message = COALESCE(?, error_message),
-    assigned_agent_id = COALESCE(?, assigned_agent_id)
+    assigned_agent_id = COALESCE(?, assigned_agent_id),
+    commit_sha = COALESCE(commit_sha, ?)
 WHERE id = ?;
 
 -- name: InsertPreviewEvent :exec
