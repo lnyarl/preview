@@ -844,3 +844,72 @@ func TestPreviewStoreGetActiveByRepoAndPR(t *testing.T) {
 		t.Fatalf("id=%s want %s (building row)", got.ID, buildID)
 	}
 }
+
+// TestFindAdhocByBranch_NotFound (Phase 11 F-4): 빈 DB → store.ErrNotFound.
+func TestFindAdhocByBranch_NotFound(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	_, err := s.FindAdhocByBranch(ctx, "acme/web", "main")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err=%v want ErrNotFound", err)
+	}
+}
+
+// TestFindAdhocByBranch_IgnoresWebhookRow (Phase 11 F-5): is_adhoc=false row 만 존재 →
+// FindAdhocByBranch 매칭 안 됨 → ErrNotFound. webhook 경로 분리 검증.
+func TestFindAdhocByBranch_IgnoresWebhookRow(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	// is_adhoc=false (default) 의 webhook row 1개 INSERT.
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: uuid.NewString(), RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "wh-sha", Branch: "main",
+		Labels: []string{}, IsAdhoc: false,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(webhook): %v", err)
+	}
+	_, err := s.FindAdhocByBranch(ctx, "acme/web", "main")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err=%v want ErrNotFound (is_adhoc=false row must not match)", err)
+	}
+}
+
+// TestFindAdhocByBranch_LatestWins (Phase 11 F-12): 같은 (repo, branch, adhoc=1)
+// row 2건 → created_at 더 최신 row 반환.
+func TestFindAdhocByBranch_LatestWins(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	olderID := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: olderID, RepoFullName: "acme/web", PrNumber: 0,
+		CommitSha: "older-sha", Branch: "feature/x",
+		Labels: []string{}, IsAdhoc: true,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(older): %v", err)
+	}
+
+	// 더 최근 row.
+	newerID := uuid.NewString()
+	newer := now.Add(2 * time.Second)
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: newerID, RepoFullName: "acme/web", PrNumber: 0,
+		CommitSha: "newer-sha", Branch: "feature/x",
+		Labels: []string{}, IsAdhoc: true,
+		CreatedAt: newer, UpdatedAt: newer,
+	}); err != nil {
+		t.Fatalf("Upsert(newer): %v", err)
+	}
+
+	got, err := s.FindAdhocByBranch(ctx, "acme/web", "feature/x")
+	if err != nil {
+		t.Fatalf("FindAdhocByBranch: %v", err)
+	}
+	if got.ID != newerID {
+		t.Fatalf("id=%s want %s (latest by created_at)", got.ID, newerID)
+	}
+}
