@@ -26,13 +26,7 @@
 <section>
   <dl>
     <dt>Status</dt>
-    <dd>
-      {{if eq .Preview.Status "running"}}<mark>{{.Preview.Status}}</mark>
-      {{else if eq .Preview.Status "failed"}}<span style="color:var(--pico-color-red-500)">{{.Preview.Status}}</span>
-      {{else if eq .Preview.Status "done"}}<span style="color:var(--pico-color-green-500)">{{.Preview.Status}}</span>
-      {{else}}{{.Preview.Status}}
-      {{end}}
-    </dd>
+    <dd>{{statusBadge .Preview.Status}}</dd>
     <dt>Repo</dt><dd>{{.Preview.RepoFullName}}</dd>
     <dt>Branch</dt><dd><code>{{.Preview.Branch}}</code></dd>
     <dt>Commit</dt><dd><code>{{if .Preview.CommitSha}}{{.Preview.CommitSha}}{{else}}<em>not set</em>{{end}}</code></dd>
