@@ -45,7 +45,10 @@
     <tbody>
     {{range .Previews}}
       <tr>
-        <td><a href="/admin/previews/{{.ID}}">#{{.PrNumber}}</a></td>
+        <td>
+          <a href="/admin/previews/{{.ID}}">#{{.PrNumber}}</a>
+          {{if .IsAdhoc}}<span class="badge" data-source="adhoc" style="margin-left:0.4em; padding:0.1em 0.45em; font-size:0.75em; border:1px solid var(--pico-secondary); border-radius:3px; color:var(--pico-secondary);">Adhoc</span>{{end}}
+        </td>
         <td>{{.RepoFullName}}</td>
         <td>{{.Status}}</td>
         <td>{{.Branch}}</td>

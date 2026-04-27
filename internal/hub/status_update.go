@@ -9,6 +9,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -43,6 +44,7 @@ func (u *StatusUpdater) OnStatusUpdate(ctx context.Context, agentID string, d pr
 		AgentHost:    d.AgentHost,
 		AgentPort:    d.AgentPort,
 		ErrorMessage: d.ErrorMessage,
+		CommitSha:    d.CommitSHA, // Phase 9: Agent 가 resolve 한 sha 를 row 의 commit_sha 에 적용 (NULL 일 때만 채움)
 	}
 	// running 시 assigned_agent_id 도 보장 (claim 시점에 채워졌지만 재시작 복원 케이스 대비).
 	if d.Status == "running" || d.Status == "building" {
@@ -57,7 +59,25 @@ func (u *StatusUpdater) OnStatusUpdate(ctx context.Context, agentID string, d pr
 			fields.PreviewURLs = &s
 		}
 	}
-	if err := u.Store.UpdateStatus(ctx, d.PreviewID, "", d.Status, d.Message, u.now(), fields); err != nil {
+	err := u.Store.UpdateStatus(ctx, d.PreviewID, "", d.Status, d.Message, u.now(), fields)
+	if errors.Is(err, store.ErrShaConflict) {
+		// Phase 9 결정 6 / R-3: agent 가 보고한 sha 가 row 에 이미 채워진 sha 와 다르면
+		// WARN 로그만 남기고 sha 갱신 외 status/필드 갱신은 sha 없이 재시도한다.
+		// nil-check 가드 — fields.CommitSha 가 nil 인데 ErrShaConflict 가 도달할 수는 없지만
+		// (store 가 fields.CommitSha != nil 일 때만 검사 진입), 방어적 nil 역참조 차단.
+		shaForLog := ""
+		if d.CommitSHA != nil {
+			shaForLog = *d.CommitSHA
+		}
+		u.Logger.Warn("preview_sha_conflict",
+			"preview_id", d.PreviewID,
+			"agent_id", agentID,
+			"agent_sha", shaForLog,
+		)
+		fields.CommitSha = nil
+		err = u.Store.UpdateStatus(ctx, d.PreviewID, "", d.Status, d.Message, u.now(), fields)
+	}
+	if err != nil {
 		return fmt.Errorf("status_update: %w", err)
 	}
 	switch d.Status {

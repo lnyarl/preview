@@ -6,7 +6,8 @@
 //   - 시작 시 1회 template.Must(template.ParseFS(...)) 로 fail-fast.
 //
 // 참고: docs/specs/phase-3-admin-ui-and-mvp.md §5-1, §5-4, §5-5,
-//       docs/specs/phase-4-agent-build-config.md §4-3, §4-4, §4-5.
+//
+//	docs/specs/phase-4-agent-build-config.md §4-3, §4-4, §4-5.
 package hub
 
 import (
@@ -315,10 +316,10 @@ func (h *AdminUIHandler) CreateAgentForm(w http.ResponseWriter, r *http.Request)
 // ---------- Token display ----------
 
 type tokenView struct {
-	Title           string
-	Name            string
-	Token           string
-	HubHost         string // e.g. "localhost:3000" — Agent 실행 명령에 사용
+	Title            string
+	Name             string
+	Token            string
+	HubHost          string // e.g. "localhost:3000" — Agent 실행 명령에 사용
 	AgentDownloadURL string // 빈 값이면 소스 빌드 안내 표시
 }
 
@@ -419,6 +420,7 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 		Branch:       branch,
 		RepoCloneURL: repoCloneURL,
 		Labels:       []string{},
+		IsAdhoc:      true, // Phase 9: Admin Test Build 진입점은 항상 IsAdhoc=true.
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -428,23 +430,15 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
+	// Phase 9 §5-7: Adhoc 분기 — sha=""(NULL) 이면 ON CONFLICT 미발동 → 항상 created=true.
+	// sha 가 명시된 두 번째 Test Build (또는 같은 sha 의 webhook 충돌) 만 !created 도달.
+	// 정책: prev.Status ∈ {done, failed} 면 reopen, active 면 noop (기존 active 에 합류).
 	previewID := p.ID
 	if !created && prev != nil {
 		previewID = prev.ID
-		// 기존 preview 가 done/failed 이면 re-run: 필드 초기화 후 queued 로 복귀.
 		if prev.Status == "done" || prev.Status == "failed" {
-			emptyStr := ""
-			zeroPort := 0
-			fields := store.PreviewFields{
-				AssignedAgentID: &emptyStr,
-				ContainerID:     &emptyStr,
-				AgentHost:       &emptyStr,
-				AgentPort:       &zeroPort,
-				PreviewURLs:     &emptyStr,
-				ErrorMessage:    &emptyStr,
-			}
 			if uerr := h.PreviewStore.UpdateStatus(r.Context(), previewID, prev.Status, "queued",
-				"re-run requested via admin UI", h.now(), fields); uerr != nil {
+				"reopened_by_test_build", h.now(), store.PreviewFields{}); uerr != nil {
 				h.Logger.Error("admin_ui_test_build_requeue_failed", "err", uerr.Error())
 				http.Error(w, "internal", http.StatusInternalServerError)
 				return
@@ -452,7 +446,7 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	h.Logger.Info("test_build_triggered", "agent_id", id,
-		"repo", repoFullName, "branch", branch, "preview_id", previewID)
+		"repo", repoFullName, "branch", branch, "preview_id", previewID, "is_adhoc", true)
 	h.triggerDispatch(r.Context())
 	http.Redirect(w, r, "/admin/previews/"+previewID, http.StatusSeeOther)
 }
@@ -520,6 +514,7 @@ type previewRow struct {
 	AgentLabel    string
 	UpdatedString string
 	PreviewURLs   map[string]string // Phase 6: service → URL
+	IsAdhoc       bool              // Phase 9: Adhoc badge 렌더용
 }
 
 type previewsFilter struct {
@@ -574,6 +569,7 @@ func (h *AdminUIHandler) previewsList(w http.ResponseWriter, r *http.Request) {
 			AgentLabel:    agentLabel,
 			UpdatedString: p.UpdatedAt.UTC().Format(time.RFC3339),
 			PreviewURLs:   previewURLs,
+			IsAdhoc:       p.IsAdhoc,
 		})
 	}
 	h.renderHTML(w, http.StatusOK, "previews.gohtml", previewsView{
@@ -600,6 +596,7 @@ type previewDetailRow struct {
 	Branch       string
 	Status       string
 	ErrorMessage string
+	IsAdhoc      bool // Phase 9: Source 행("Adhoc (manual)" vs "Webhook") 표시용
 }
 
 type previewDetailView struct {
@@ -718,6 +715,7 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			Branch:       p.Branch,
 			Status:       p.Status,
 			ErrorMessage: errMsg,
+			IsAdhoc:      p.IsAdhoc,
 		},
 		AgentLine:       agentLine,
 		PreviewURLs:     previewURLs,

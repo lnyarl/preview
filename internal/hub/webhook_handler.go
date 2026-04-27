@@ -102,6 +102,8 @@ func (h *WebhookHandler) SetTeardownSender(s TeardownSender) { h.TeardownSender 
 //
 // Phase 6: public_url 제거. preview_urls (Agent 가 산출한 service→URL 매핑의 raw
 // JSON 직렬화 문자열) 와 repo_clone_url (webhook 에서 추출한 git clone URL) 추가.
+//
+// Phase 9: is_adhoc 추가. Admin Test Build 로 만들어진 row 는 true, webhook 발 false.
 type PreviewView struct {
 	ID              string   `json:"id"`
 	RepoFullName    string   `json:"repo_full_name"`
@@ -117,6 +119,7 @@ type PreviewView struct {
 	PreviewURLs     string   `json:"preview_urls"`
 	Labels          []string `json:"labels"`
 	ErrorMessage    *string  `json:"error_message"`
+	IsAdhoc         bool     `json:"is_adhoc"`
 	CreatedAt       string   `json:"created_at"`
 	UpdatedAt       string   `json:"updated_at"`
 }
@@ -143,6 +146,7 @@ func PreviewToView(p store.Preview) PreviewView {
 		PreviewURLs:     p.PreviewURLs,
 		Labels:          labels,
 		ErrorMessage:    p.ErrorMessage,
+		IsAdhoc:         p.IsAdhoc,
 		CreatedAt:       p.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:       p.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -212,24 +216,60 @@ func (h *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpsert 는 opened/synchronize/reopened 처리.
-// 신규는 INSERT(status='queued'), 기존은 UPDATE(필드만).
-// 기존 row 의 status 가 done|failed 였다면 별도로 UpdateStatus(*→queued) 호출
-// (결정 11: status 변경은 UpdateStatus 단일 진입점).
+//
+// Phase 9 Decision Matrix (synchronize 액션 기준, §5-6):
+//   - Case A (active 존재 + 같은 sha): Upsert idempotent — ON CONFLICT 가 같은 row
+//     UPDATE. teardown / 신규 INSERT 없음.
+//   - Case B (active 존재 + 다른 sha): 기존 active row teardown(status 전이 + JOB_TEARDOWN)
+//   - 신규 INSERT(status='queued') + 신규 row 의 첫 event 에 supersede 메모.
+//   - Case C (active 없음 + 같은 sha 의 done/failed): Upsert ON CONFLICT 발동 → reopen.
+//   - Case D (active 없음 + 새 sha): 신규 INSERT 만.
+//
+// opened/reopened 는 Case A/B 분기를 적용하지 않는다(통상 같은 PR 의 active 가 없는 흐름).
+//
+// Adhoc 진입점이 아니므로 IsAdhoc=false.
 func (h *WebhookHandler) handleUpsert(w http.ResponseWriter, ctx context.Context, p pullRequestEvent, prNum int) {
 	now := h.now()
 	labels := labelsFromPR(p)
 	id := uuid.NewString()
+	newSha := p.PullRequest.Head.SHA
 	if p.Repository.CloneURL == "" {
 		h.Logger.Warn("webhook_clone_url_missing", "repo", p.Repository.FullName, "pr", prNum)
 	}
+
+	// === synchronize: Case B (다른 sha) 사전 처리 ===
+	// 기존 active row 가 있고 sha 가 다르면 teardown + JOB_TEARDOWN 송신.
+	// supersededID 는 신규 INSERT 후 첫 event 에 supersede 정보를 남기기 위해 보존.
+	supersededID := ""
+	if p.Action == "synchronize" {
+		existing, gerr := h.Store.GetActiveByRepoAndPR(ctx, p.Repository.FullName, prNum)
+		if gerr == nil && existing != nil && existing.CommitSha != newSha {
+			if uerr := h.Store.UpdateStatus(ctx, existing.ID, "", "teardown",
+				"superseded_by_sha="+newSha, now, store.PreviewFields{}); uerr != nil {
+				h.Logger.Error("preview_supersede_teardown_failed", "err", uerr.Error(), "preview_id", existing.ID)
+				writeError(w, http.StatusInternalServerError, "internal", "supersede failed")
+				return
+			}
+			if h.TeardownSender != nil && existing.AssignedAgentID != nil {
+				if terr := h.TeardownSender.SendTeardown(ctx, *existing.AssignedAgentID, existing.ID); terr != nil {
+					h.Logger.Warn("teardown_send_failed", "preview_id", existing.ID,
+						"agent_id", *existing.AssignedAgentID, "err", terr.Error())
+				}
+			}
+			supersededID = existing.ID
+		}
+		// Case A 또는 Case C/D 는 fall through. Upsert 가 idempotent / reopen / 신규 INSERT 처리.
+	}
+
 	preview := store.Preview{
 		ID:           id,
 		RepoFullName: p.Repository.FullName,
 		PrNumber:     prNum,
-		CommitSha:    p.PullRequest.Head.SHA,
+		CommitSha:    newSha,
 		Branch:       p.PullRequest.Head.Ref,
 		Labels:       labels,
 		RepoCloneURL: p.Repository.CloneURL,
+		IsAdhoc:      false,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -243,22 +283,30 @@ func (h *WebhookHandler) handleUpsert(w http.ResponseWriter, ctx context.Context
 
 	finalID := id
 	finalStatus := "queued"
-	if !created {
-		// 기존 row — Upsert 로 sha/labels/branch 갱신 완료. ID 는 기존 row 의 것을 사용.
-		// 재오픈(prev.Status in done|failed)이면 UpdateStatus 호출.
-		if prev != nil {
-			finalID = prev.ID
-			finalStatus = prev.Status
-			if prev.Status == "done" || prev.Status == "failed" {
-				if uerr := h.Store.UpdateStatus(ctx, prev.ID, prev.Status, "queued", "reopened_via_webhook", now, store.PreviewFields{}); uerr != nil {
-					h.Logger.Error("preview_reopen_failed", "err", uerr.Error(), "preview_id", prev.ID)
-					writeError(w, http.StatusInternalServerError, "internal", "reopen failed")
-					return
-				}
-				finalStatus = "queued"
+	switch {
+	case !created && prev != nil:
+		// Case A 또는 Case C — 기존 row 가 있는 분기.
+		finalID = prev.ID
+		finalStatus = prev.Status
+		// Case C: done/failed 였다면 reopen.
+		if prev.Status == "done" || prev.Status == "failed" {
+			if uerr := h.Store.UpdateStatus(ctx, prev.ID, prev.Status, "queued",
+				"reopened_by_"+p.Action, now, store.PreviewFields{}); uerr != nil {
+				h.Logger.Error("preview_reopen_failed", "err", uerr.Error(), "preview_id", prev.ID)
+				writeError(w, http.StatusInternalServerError, "internal", "reopen failed")
+				return
 			}
+			finalStatus = "queued"
+		}
+	case created && supersededID != "":
+		// Case B — 신규 INSERT 직후 자기-루프 UpdateStatus 로 supersede 추적 message 기록.
+		if uerr := h.Store.UpdateStatus(ctx, id, "queued", "queued",
+			"created_after_supersede_of="+supersededID, now, store.PreviewFields{}); uerr != nil {
+			// supersede event 기록 실패는 운영 timeline 가독성 손실에 그치므로 WARN 만 남기고 진행.
+			h.Logger.Warn("preview_supersede_event_failed", "err", uerr.Error(), "preview_id", id)
 		}
 	}
+
 	h.Logger.Info("preview_webhook_processed",
 		"action", p.Action,
 		"preview_id", finalID,
@@ -266,6 +314,8 @@ func (h *WebhookHandler) handleUpsert(w http.ResponseWriter, ctx context.Context
 		"pr", prNum,
 		"status", finalStatus,
 		"created", created,
+		"is_adhoc", false,
+		"superseded_id", supersededID,
 	)
 	writeJSON(w, http.StatusAccepted, map[string]any{"preview_id": finalID, "status": finalStatus})
 }

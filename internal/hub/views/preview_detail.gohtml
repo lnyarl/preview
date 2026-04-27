@@ -33,6 +33,7 @@
     <dt>Repo</dt><dd>{{.Preview.RepoFullName}}</dd>
     <dt>Branch</dt><dd><code>{{.Preview.Branch}}</code></dd>
     <dt>Commit</dt><dd><code>{{if .Preview.CommitSha}}{{.Preview.CommitSha}}{{else}}<em>not set</em>{{end}}</code></dd>
+    <dt>Source</dt><dd>{{if .Preview.IsAdhoc}}Adhoc (manual){{else}}Webhook{{end}}</dd>
     <dt>Agent</dt><dd>{{.AgentLine}}</dd>
     <dt>URLs</dt>
     <dd>
