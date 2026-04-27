@@ -49,11 +49,19 @@
   </dl>
 </section>
 
-<section>
-  <form method="POST" action="/admin/previews/{{.Preview.ID}}/rebuild">
-    <button type="submit"{{if not .RebuildEnabled}} disabled{{end}}>Re-run</button>
-  </form>
-  <small>Re-run is enabled only when status is <code>done</code> or <code>failed</code>.</small>
+<section style="display:flex; gap:1rem; align-items:flex-start; flex-wrap:wrap;">
+  <div>
+    <form method="POST" action="/admin/previews/{{.Preview.ID}}/rebuild">
+      <button type="submit"{{if not .RebuildEnabled}} disabled{{end}}>Re-run</button>
+    </form>
+    <small>Status가 <code>done</code> 또는 <code>failed</code>일 때 활성화됩니다.</small>
+  </div>
+  <div>
+    <form method="POST" action="/admin/previews/{{.Preview.ID}}/stop">
+      <button type="submit" class="secondary"{{if not .StopEnabled}} disabled{{end}}>Stop</button>
+    </form>
+    <small>Status가 <code>running</code>일 때 활성화됩니다.</small>
+  </div>
 </section>
 
 <section>

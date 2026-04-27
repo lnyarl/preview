@@ -104,6 +104,7 @@ func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/agents/token", h.agentToken)
 	mux.HandleFunc("POST /admin/agents/{id}/delete", h.agentDelete)
 	mux.HandleFunc("POST /admin/previews/{id}/rebuild", h.previewRebuild)
+	mux.HandleFunc("POST /admin/previews/{id}/stop", h.previewStop)
 	// Phase 4: agent detail (build config 폼) + 저장 POST.
 	// {id} 가 "token" 등 다른 정적 prefix 와 충돌하지 않도록 GET /admin/agents/token 보다
 	// 뒤에 등록되어도 net/http mux 는 longest-prefix + literal-match 우선이므로 안전.
@@ -694,6 +695,7 @@ type previewDetailView struct {
 	Events          []eventRow        // 최근 N개 (newest first)
 	OlderEvents     []eventRow        // 그 이전 이벤트들 (collapsed, newest first)
 	RebuildEnabled  bool
+	StopEnabled     bool
 	ConflictMessage string
 	Diagnosis       string // 사람이 읽을 수 있는 실패 원인 요약
 	BuildOutput     string // docker/compose 실행 출력 (error_message 의 "(output: ...)" 부분)
@@ -808,6 +810,7 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(p.PreviewURLs), &previewURLs)
 	}
 	rebuildEnabled := p.Status == "done" || p.Status == "failed"
+	stopEnabled := p.Status == "running"
 	conflict := r.URL.Query().Get("msg")
 	errMsg := ""
 	if p.ErrorMessage != nil {
@@ -834,6 +837,7 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		Events:          recentRows,
 		OlderEvents:     olderRows,
 		RebuildEnabled:  rebuildEnabled,
+		StopEnabled:     stopEnabled,
 		ConflictMessage: conflict,
 		Diagnosis:       diagnoseBuildError(errMsg),
 		BuildOutput:     extractBuildOutput(errMsg),
@@ -904,6 +908,45 @@ func (h *AdminUIHandler) previewRebuild(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"preview_id": id, "status": "queued"})
 		return
 	}
+	http.Redirect(w, r, "/admin/previews/"+id, http.StatusSeeOther)
+}
+
+// previewStop 은 POST /admin/previews/{id}/stop 핸들러.
+// running 상태의 preview 를 teardown 으로 전이하고 agent 에 JOB_TEARDOWN 을 송신한다.
+func (h *AdminUIHandler) previewStop(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "preview id required", http.StatusNotFound)
+		return
+	}
+	p, err := h.PreviewStore.GetByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "preview not found", http.StatusNotFound)
+			return
+		}
+		h.Logger.Error("admin_ui_stop_get_failed", "err", err.Error(), "preview_id", id)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	if p.Status != "running" {
+		http.Redirect(w, r,
+			fmt.Sprintf("/admin/previews/%s?msg=stop+requires+running+status", id),
+			http.StatusSeeOther)
+		return
+	}
+	if err := h.PreviewStore.UpdateStatus(r.Context(), id, p.Status, "teardown",
+		"stopped via admin UI", h.now(), store.PreviewFields{}); err != nil {
+		h.Logger.Error("admin_ui_stop_update_failed", "err", err.Error(), "preview_id", id)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	if h.TeardownSender != nil && p.AssignedAgentID != nil {
+		if err := h.TeardownSender.SendTeardown(r.Context(), *p.AssignedAgentID, id); err != nil {
+			h.Logger.Warn("admin_ui_stop_teardown_send_failed", "preview_id", id, "err", err.Error())
+		}
+	}
+	h.Logger.Info("preview_stop_requested", "preview_id", id)
 	http.Redirect(w, r, "/admin/previews/"+id, http.StatusSeeOther)
 }
 
