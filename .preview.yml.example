@@ -1,0 +1,67 @@
+# .preview.yml — Preview 에이전트 빌드 설정 파일
+#
+# 이 파일을 저장소 루트에 .preview.yml (또는 .preview.yaml) 이름으로 저장한다.
+# 에이전트가 빌드 시 자동으로 읽는다.
+#
+# ──────────────────────────────────────────────
+# 최소 예제 (Dockerfile 모드, 단일 서비스)
+# ──────────────────────────────────────────────
+services:
+  web:
+    port: 3000      # 컨테이너가 리슨하는 포트 (1–65535, 필수)
+    path: /         # Traefik 라우팅 경로 접두사 (/ 로 시작, 필수)
+    strip: true     # path 접두사를 컨테이너로 전달하기 전에 제거 (기본값: true)
+
+# 위 설정만으로 저장소 루트의 Dockerfile 을 자동 탐지해 빌드한다.
+# 접근 URL: http://<agent-host>:8080/<preview-id>/
+
+---
+# ──────────────────────────────────────────────
+# Docker Compose 모드 예제
+# ──────────────────────────────────────────────
+#
+# compose_file: docker-compose.yml   # 생략하면 루트의 docker-compose.yml 자동 탐지
+#                                    # compose.yml / docker-compose.yaml 도 자동 탐지
+# services:
+#   web:
+#     port: 8080
+#     path: /
+#   api:
+#     port: 4000
+#     path: /api    # 접근 URL: http://<host>:8080/<preview-id>/api/...
+#     strip: false  # /api 접두사를 그대로 컨테이너에 전달 (strip 끄기)
+
+---
+# ──────────────────────────────────────────────
+# Dockerfile 경로 명시 예제
+# ──────────────────────────────────────────────
+#
+# dockerfile: docker/Dockerfile.preview   # 루트 기준 상대 경로
+# services:
+#   app:
+#     port: 5000
+#     path: /
+
+---
+# ──────────────────────────────────────────────
+# 필드 요약
+# ──────────────────────────────────────────────
+#
+# compose_file  string   optional  docker-compose 파일 경로 (상대 경로)
+#                                  명시 시 파일 존재 여부 검증.
+#                                  생략 시 docker-compose.yml 등 자동 탐지.
+#
+# dockerfile    string   optional  Dockerfile 경로 (상대 경로)
+#                                  명시 시 파일 존재 여부 검증.
+#                                  생략 시 ./Dockerfile 자동 탐지.
+#                                  compose_file 이 있으면 compose 모드 우선.
+#
+# services      map      required  서비스 이름 → 라우팅 설정
+#   <name>:
+#     port      int      required  컨테이너 내부 포트 (1–65535)
+#     path      string   required  URL 경로 접두사, / 로 시작해야 함
+#     strip     bool     optional  true(기본) = 접두사 제거 후 전달
+#                                  false      = 접두사 포함해 전달
+#
+# 서비스 이름 규칙: 소문자 영숫자, 하이픈(-), 언더스코어(_) 만 허용
+# 예) web, api, frontend-v2, worker_1

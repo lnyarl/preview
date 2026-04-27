@@ -51,6 +51,29 @@ make tag v=1.0.0  # 릴리즈 태그 생성 + 푸시
 make test         # 테스트
 ```
 
+## Build secrets (Phase 10)
+
+저장소(`owner/repo`) 단위로 빌드 시 환경변수 묶음을 등록할 수 있습니다.
+
+- 등록: 대시보드 → **Repos** → `Edit secrets` → textarea 에 `KEY=VALUE` 한 줄씩 입력 → **Save**.
+- 적용: 다음 PR webhook 의 JOB_ASSIGN 메시지에 동봉되어 Agent 가 worktree 루트에 `.env` 파일로 작성.
+- compose 모드: `docker compose up` 이 동일 디렉토리의 `.env` 를 자동 인식 → `${VAR}` 보간 + `env_file: .env` 양쪽이 동작.
+- Dockerfile 모드: `docker build` 는 `.env` 를 자동 ARG/ENV 로 주입하지 **않습니다**. `Dockerfile` 안에서 `COPY .env /app/.env` 후 런타임 dotenv 로딩, 또는 build args 로 명시 전달이 필요합니다.
+
+예:
+
+```
+DATABASE_URL=postgres://app:pw@db:5432/app
+API_KEY=sk-xxxxxxxxxxxx
+FEATURE_FLAG=on
+```
+
+**보안 주의 (Phase 10 한정):**
+- 값은 **plaintext** 로 Hub DB(`hub.db`) 에 저장됩니다. 암호화는 후속 Phase 예정.
+- JOB_ASSIGN 페이로드의 `build_env` 필드도 평문으로 WS frame 위에 흐릅니다 — Hub 를 reverse proxy(TLS 종단) 또는 자체 https 뒤에 두어야 합니다 (`wss://`).
+- Repo full name 은 case-insensitive (저장 시 lowercase 정규화).
+- 같은 repo 의 worktree 에 git-tracked 된 기존 `.env` 가 있으면 매 빌드마다 덮어써집니다.
+
 ## 프로덕션 설치
 
 OS별 상세 가이드:
