@@ -692,3 +692,20 @@ func (s *PreviewStore) GetActiveByRepoAndPR(ctx context.Context, repoFullName st
 	}
 	return previewRowToDomain(row)
 }
+
+// FindAdhocByBranch 는 (repo_full_name, branch) + is_adhoc=1 의 가장 최근 row 1건을
+// 반환한다. 상태 무관. 없으면 store.ErrNotFound. Phase 11: Admin Test Build
+// dedup 진입점에서 사용한다 (§4 의사코드 step 1).
+func (s *PreviewStore) FindAdhocByBranch(ctx context.Context, repoFullName, branch string) (*store.Preview, error) {
+	row, err := s.q.GetAdhocPreviewByBranch(ctx, GetAdhocPreviewByBranchParams{
+		RepoFullName: repoFullName,
+		Branch:       branch,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, fmt.Errorf("sqlite.FindAdhocByBranch: %w", err)
+	}
+	return previewRowToDomain(row)
+}

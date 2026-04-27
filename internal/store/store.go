@@ -161,6 +161,14 @@ type PreviewStore interface {
 	// 기존 active 가 있는지 확인하기 위해 사용한다.
 	GetActiveByRepoAndPR(ctx context.Context, repoFullName string, prNumber int) (*Preview, error)
 
+	// FindAdhocByBranch 는 같은 (repo_full_name, branch) 의 가장 최근 adhoc preview 1건을
+	// 반환한다. 상태 무관 — 호출자가 active/terminal 분기를 책임진다. 없으면 ErrNotFound.
+	//
+	// Phase 11: Admin Test Build 의 (repo, branch) 단위 dedup 진입점.
+	// is_adhoc=1 row 만 매칭하므로 webhook(is_adhoc=false) 경로는 영향받지 않는다.
+	// 동일 키 row 가 여러 건이면 created_at DESC 의 첫 번째 (= 가장 최근) row 가 반환된다.
+	FindAdhocByBranch(ctx context.Context, repoFullName, branch string) (*Preview, error)
+
 	// ListRepos 는 previews 테이블의 distinct repo_full_name 을 정렬 반환한다.
 	// Phase 10 (결정 14): /admin/repos 인덱스 페이지가 repo_secrets 와 union 하기 위한
 	// 진입점. SQL DISTINCT 를 사용해 메모리 폭주 없이 N→K 축소를 DB 측에서 수행.
