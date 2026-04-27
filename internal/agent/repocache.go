@@ -224,11 +224,11 @@ func (c *RepoCache) Checkout(ctx context.Context, previewID, sha, branch string)
 		if ferr := c.fetch(ctx); ferr != nil {
 			return "", fmt.Errorf("repocache.Checkout: fetch: %w", ferr)
 		}
-		// bare clone 에서 branch tip 을 resolve한다.
-		// fetch 후 refs/remotes/origin/<branch> 로 저장되므로 그 쪽을 먼저 시도.
+		// bare clone 은 fetch refspec 이 +refs/heads/*:refs/heads/* 이므로
+		// 브랜치가 refs/heads/<branch> 에 직접 저장된다 (refs/remotes/origin/* 아님).
 		ref := "HEAD"
 		if branch != "" {
-			ref = "origin/" + branch
+			ref = branch
 		}
 		resolved, err := c.runner.Output(ctx, "git", "--git-dir="+c.repoDir, "rev-parse", ref+"^{commit}")
 		if err != nil {
