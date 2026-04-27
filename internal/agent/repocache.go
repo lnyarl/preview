@@ -252,6 +252,12 @@ func (c *RepoCache) Checkout(ctx context.Context, previewID, sha, branch string)
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		return "", fmt.Errorf("repocache.Checkout: mkdir worktrees: %w", err)
 	}
+	// 이전 실패 빌드가 남긴 stale worktree 를 제거한다. Re-run 시 동일 previewID 로
+	// worktree add 하면 "already exists" 오류가 나므로 사전에 정리한다.
+	if _, statErr := os.Stat(worktreePath); statErr == nil {
+		_ = c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "worktree", "remove", "--force", worktreePath)
+		_ = os.RemoveAll(worktreePath)
+	}
 	if err := c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "worktree", "add", "--detach", worktreePath, sha); err != nil {
 		return "", fmt.Errorf("repocache.Checkout: worktree add: %w", err)
 	}

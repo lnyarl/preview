@@ -151,7 +151,20 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return nil
 	}
 	r.inFlight.Add(1)
-	defer func() { r.inFlight.Add(-1); r.maybeSendReady(ctx) }()
+	// checkedOutWorktree 는 Checkout 성공 후 설정된다. 빌드가 실패해 jobs 맵에 등록되지 않은
+	// 경우 defer 가 worktree 를 정리해 Re-run 시 "worktree already exists" 오류를 방지한다.
+	var checkedOutWorktree string
+	defer func() {
+		r.inFlight.Add(-1)
+		if checkedOutWorktree != "" {
+			if _, running := r.jobs.Load(pid); !running {
+				if rerr := r.cache.Remove(ctx, msg.RepoURL, pid); rerr != nil {
+					r.logger.Warn("handle_cleanup_failed_worktree", "preview_id", pid, "err", rerr.Error())
+				}
+			}
+		}
+		r.maybeSendReady(ctx)
+	}()
 	r.logger.Info("agent_job_assign", "preview_id", pid, "repo_url", msg.RepoURL, "sha", msg.CommitSHA)
 
 	// (1) 첫 번째 building 송신 — assigned → building 즉시 전이.
@@ -178,6 +191,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	if err != nil {
 		return r.fail(ctx, pid, "repocache_checkout", err)
 	}
+	checkedOutWorktree = worktree
 
 	// (2b) 두 번째 building 송신 — sha 동봉 (Phase 9 결정 5).
 	// worktree HEAD 의 git rev-parse 로 실제 sha 추출. 빈 message 로 보내 첫 번째 message
