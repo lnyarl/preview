@@ -396,6 +396,21 @@ func (h *AdminUIHandler) testBuildForm(w http.ResponseWriter, r *http.Request) {
 		testBuildView{Title: "Test Build", AgentID: id, AgentName: a.Name})
 }
 
+// testBuildSubmit 은 Admin Test Build 폼 POST 핸들러.
+//
+// Phase 11 dedup 시퀀스 (§4 의사코드):
+//
+//  1. FindAdhocByBranch(ctx, repo, branch) lookup.
+//  2. dedup HIT (err == nil):
+//     - active = {queued, assigned, building, running, teardown} → noop redirect.
+//     - terminal = {done, failed} → 6 필드 reset + UpdateStatus(→queued).
+//     ErrStaleState 시 다른 경로가 이미 처리한 것으로 보고 redirect (dispatcher 트리거 생략).
+//     성공 시 triggerDispatch + redirect.
+//  3. dedup MISS (ErrNotFound) → 기존 Upsert 경로. !created 는 비범위(§2) — slog.Error+500.
+//  4. 그 외 err → 500.
+//
+// 결정 4: re-queue 시 fields.CommitSha = nil. store 의 nil 가드가 SQL 갱신을 건너뛰므로
+// 기존 sha 가 자연 보존된다. 폼의 commit_sha 입력은 dedup hit 경로에서 무시된다.
 func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if err := r.ParseForm(); err != nil {
@@ -419,6 +434,75 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// (1) dedup lookup — (repo, branch, is_adhoc=1) 가장 최근 row.
+	prev, ferr := h.PreviewStore.FindAdhocByBranch(r.Context(), repoFullName, branch)
+	switch {
+	case ferr == nil:
+		// (2) dedup HIT.
+		switch prev.Status {
+		case "queued", "assigned", "building", "running", "teardown":
+			// active → noop redirect. dispatcher 호출 없음 (F-11).
+			h.Logger.Info("test_build_dedup_active", "agent_id", id,
+				"repo", repoFullName, "branch", branch, "preview_id", prev.ID,
+				"status", prev.Status)
+			http.Redirect(w, r, "/admin/previews/"+prev.ID, http.StatusSeeOther)
+			return
+		case "done", "failed":
+			// terminal → 6 필드 reset + UpdateStatus(→queued).
+			// CommitSha 는 nil 로 두어 store 의 nil 가드가 SQL 갱신을 건너뛰게 한다 (결정 4).
+			emptyContainer := ""
+			emptyHost := ""
+			zeroPort := 0
+			emptyURL := ""
+			emptyErr := ""
+			emptyAssign := ""
+			fields := store.PreviewFields{
+				ContainerID:     &emptyContainer,
+				AgentHost:       &emptyHost,
+				AgentPort:       &zeroPort,
+				PreviewURLs:     &emptyURL,
+				ErrorMessage:    &emptyErr,
+				AssignedAgentID: &emptyAssign,
+				// CommitSha: nil — 기존 sha 보존 (결정 4).
+			}
+			uerr := h.PreviewStore.UpdateStatus(r.Context(), prev.ID, prev.Status, "queued",
+				"re-queued by test build", h.now(), fields)
+			if errors.Is(uerr, store.ErrStaleState) {
+				// 다른 경로가 이미 상태를 바꿨다 → 그 경로의 dispatcher 트리거에 일임 (F-6).
+				h.Logger.Info("test_build_dedup_requeued", "agent_id", id,
+					"repo", repoFullName, "branch", branch, "preview_id", prev.ID,
+					"stale_state", true)
+				http.Redirect(w, r, "/admin/previews/"+prev.ID, http.StatusSeeOther)
+				return
+			}
+			if uerr != nil {
+				h.Logger.Error("admin_ui_test_build_requeue_failed",
+					"err", uerr.Error(), "preview_id", prev.ID)
+				http.Error(w, "internal", http.StatusInternalServerError)
+				return
+			}
+			h.Logger.Info("test_build_dedup_requeued", "agent_id", id,
+				"repo", repoFullName, "branch", branch, "preview_id", prev.ID)
+			h.triggerDispatch(r.Context())
+			http.Redirect(w, r, "/admin/previews/"+prev.ID, http.StatusSeeOther)
+			return
+		default:
+			// 알 수 없는 상태값 — 보수적으로 redirect.
+			h.Logger.Warn("admin_ui_test_build_unknown_status",
+				"preview_id", prev.ID, "status", prev.Status)
+			http.Redirect(w, r, "/admin/previews/"+prev.ID, http.StatusSeeOther)
+			return
+		}
+	case errors.Is(ferr, store.ErrNotFound):
+		// (3) dedup MISS — 신규 Upsert 경로.
+	default:
+		// (4) 그 외 lookup 에러.
+		h.Logger.Error("admin_ui_test_build_dedup_lookup_failed",
+			"err", ferr.Error(), "repo", repoFullName, "branch", branch)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+
 	now := h.now()
 	p := store.Preview{
 		ID:           uuid.NewString(),
@@ -432,31 +516,26 @@ func (h *AdminUIHandler) testBuildSubmit(w http.ResponseWriter, r *http.Request)
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	created, prev, err := h.PreviewStore.Upsert(r.Context(), p)
+	created, _, err := h.PreviewStore.Upsert(r.Context(), p)
 	if err != nil {
 		h.Logger.Error("admin_ui_test_build_upsert_failed", "err", err.Error())
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	// Phase 9 §5-7: Adhoc 분기 — sha=""(NULL) 이면 ON CONFLICT 미발동 → 항상 created=true.
-	// sha 가 명시된 두 번째 Test Build (또는 같은 sha 의 webhook 충돌) 만 !created 도달.
-	// 정책: prev.Status ∈ {done, failed} 면 reopen, active 면 noop (기존 active 에 합류).
-	previewID := p.ID
-	if !created && prev != nil {
-		previewID = prev.ID
-		if prev.Status == "done" || prev.Status == "failed" {
-			if uerr := h.PreviewStore.UpdateStatus(r.Context(), previewID, prev.Status, "queued",
-				"reopened_by_test_build", h.now(), store.PreviewFields{}); uerr != nil {
-				h.Logger.Error("admin_ui_test_build_requeue_failed", "err", uerr.Error())
-				http.Error(w, "internal", http.StatusInternalServerError)
-				return
-			}
-		}
+	if !created {
+		// Phase 11 §3 결정 5 / §2 비범위: cross-branch sha 충돌 (같은 sha 가 다른 branch/PR
+		// 로 진입) 케이스. 본 Phase 는 비범위로 선언하고 보호 차원의 500 으로 처리한다.
+		// 후속 Phase 에서 정식 정책 도입 예정.
+		h.Logger.Error("admin_ui_test_build_unexpected_existing",
+			"repo", repoFullName, "branch", branch, "commit_sha", commitSha,
+			"preview_id", p.ID)
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
 	}
 	h.Logger.Info("test_build_triggered", "agent_id", id,
-		"repo", repoFullName, "branch", branch, "preview_id", previewID, "is_adhoc", true)
+		"repo", repoFullName, "branch", branch, "preview_id", p.ID, "is_adhoc", true)
 	h.triggerDispatch(r.Context())
-	http.Redirect(w, r, "/admin/previews/"+previewID, http.StatusSeeOther)
+	http.Redirect(w, r, "/admin/previews/"+p.ID, http.StatusSeeOther)
 }
 
 // repoFullNameFromURL 은 git clone URL 에서 "owner/repo" 를 추출한다.

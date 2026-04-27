@@ -500,9 +500,13 @@ func TestAdminAgentsListHasDetailLink(t *testing.T) {
 	}
 }
 
-// TestAdminTestBuildSubmitMultipleShasCreateRowsAllAdhoc (F-10): Admin Test Build 두 번,
-// 같은 repo + 다른 sha → row 2개, 모두 IsAdhoc=true.
-func TestAdminTestBuildSubmitMultipleShasCreateRowsAllAdhoc(t *testing.T) {
+// TestAdminTestBuildSubmitDifferentBranchesCreateRowsAllAdhoc (F-10):
+// Admin Test Build 두 번, 같은 repo + 다른 branch → row 2개, 모두 IsAdhoc=true.
+//
+// Phase 11 변경: 기존 동명 테스트는 "같은 branch + 다른 sha" 였으나, Phase 11 의
+// (repo, branch) dedup 으로는 같은 branch 두 번째 호출이 dedup HIT 으로 처리되므로
+// 새 row 가 생기지 않는다. 다른 branch 로 분기해 신규 row 가 생기는 케이스를 검증.
+func TestAdminTestBuildSubmitDifferentBranchesCreateRowsAllAdhoc(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	as := newAdminUIAgentStore()
 	ps := newAdminUIPreviewStore()
@@ -513,21 +517,21 @@ func TestAdminTestBuildSubmitMultipleShasCreateRowsAllAdhoc(t *testing.T) {
 		ID: "a1", Name: "agent-1", Status: "online", CreatedAt: time.Now().UTC(),
 	})
 
-	for i, sha := range []string{"sha-A", "sha-B"} {
-		form := "repo_clone_url=https://github.com/acme/web.git&branch=main&commit_sha=" + sha
+	for i, br := range []string{"main", "feature/x"} {
+		form := "repo_clone_url=https://github.com/acme/web.git&branch=" + br + "&commit_sha=sha-" + br
 		req := httptest.NewRequest("POST", "/admin/agents/a1/test-build", strings.NewReader(form))
 		req.SetPathValue("id", "a1")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rr := httptest.NewRecorder()
 		ui.testBuildSubmit(rr, req)
 		if rr.Code != http.StatusSeeOther {
-			t.Fatalf("submit[%d] status=%d want 303 (sha=%s)", i, rr.Code, sha)
+			t.Fatalf("submit[%d] status=%d want 303 (branch=%s)", i, rr.Code, br)
 		}
 	}
 
 	all, _ := ps.ListAll(context.Background())
 	if len(all) != 2 {
-		t.Fatalf("rows=%d want 2 (different sha → distinct rows)", len(all))
+		t.Fatalf("rows=%d want 2 (different branch → distinct rows)", len(all))
 	}
 	for _, p := range all {
 		if !p.IsAdhoc {
