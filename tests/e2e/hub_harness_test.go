@@ -72,6 +72,7 @@ func startHub(t *testing.T, webhookSecret string) *hubHarness {
 
 	agentStore := sqlitestore.NewAgentStore(db)
 	previewStore := sqlitestore.NewPreviewStore(db)
+	repoSecretStore := sqlitestore.NewRepoSecretStore(sqlitestore.New(db)) // Phase 10
 
 	if _, err := agentStore.ResetAllOnline(ctx); err != nil {
 		t.Fatalf("reset online: %v", err)
@@ -87,12 +88,13 @@ func startHub(t *testing.T, webhookSecret string) *hubHarness {
 	webhook := hub.NewWebhookHandler(previewStore, webhookSecret, logger)
 	adminUI := hub.NewAdminUIHandler(agentStore, previewStore, tg, logger)
 	adminUI.SetRegistry(reg)
+	adminUI.SetRepoSecrets(repoSecretStore)
 	admin.SetUI(adminUI)
 	webhook.SetUI(adminUI)
 	ws.SetPreviewStore(previewStore)
 
 	jobSender := hub.NewWSJobSender(reg)
-	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, logger)
+	dispatcher := hub.NewDispatcher(agentStore, previewStore, repoSecretStore, jobSender, logger)
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)
 	ws.SetStatusUpdate(statusUpdater)

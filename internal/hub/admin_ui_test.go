@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -198,6 +199,26 @@ func (f *adminUIFakePreviewStore) ListPreviewEvents(_ context.Context, previewID
 // Phase 9: GetActiveByRepoAndPR — admin UI 테스트는 webhook 분기를 다루지 않으므로 stub.
 func (f *adminUIFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
 	return nil, store.ErrNotFound
+}
+
+// Phase 10: ListRepos stub — admin UI 테스트는 /admin/repos 인덱스 union 동작을 별도로 검증.
+func (f *adminUIFakePreviewStore) ListRepos(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, p := range f.rows {
+		if p.RepoFullName == "" {
+			continue
+		}
+		if _, ok := seen[p.RepoFullName]; ok {
+			continue
+		}
+		seen[p.RepoFullName] = struct{}{}
+		out = append(out, p.RepoFullName)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func newAdminUIHandler() *AdminUIHandler {

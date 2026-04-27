@@ -159,6 +159,24 @@ func (f *fakePreviewStore) GetActiveByRepoAndPR(_ context.Context, repoFullName 
 	return best, nil
 }
 
+func (f *fakePreviewStore) ListRepos(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, p := range f.rows {
+		if p.RepoFullName == "" {
+			continue
+		}
+		if _, ok := seen[p.RepoFullName]; ok {
+			continue
+		}
+		seen[p.RepoFullName] = struct{}{}
+		out = append(out, p.RepoFullName)
+	}
+	return out, nil
+}
+
 // helpers --------------------------------------------------------------------
 
 const testSecret = "test-secret"
@@ -226,6 +244,29 @@ func TestWebhookInvalidSignature(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&body)
 	if body["error"] != "invalid_signature" {
 		t.Fatalf("error=%q want invalid_signature", body["error"])
+	}
+}
+
+// TestWebhookLowercasesRepoFullName (Phase 10 NF-Regression-3 / 결정 15 / R-8):
+// GitHub webhook payload 의 mixed-case full_name 이 previews 에 저장되기 전에
+// lowercase 로 정규화되어야 한다.
+func TestWebhookLowercasesRepoFullName(t *testing.T) {
+	srv, fs := newTestServer(t)
+	body := []byte(`{"action":"opened","pull_request":{"number":1,"head":{"sha":"a","ref":"m"}},"repository":{"full_name":"FoO/BaR"}}`)
+	resp := postWebhook(t, srv.URL, "pull_request", body, sign([]byte(testSecret), body))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.rows) != 1 {
+		t.Fatalf("rows=%d want 1", len(fs.rows))
+	}
+	for _, p := range fs.rows {
+		if p.RepoFullName != "foo/bar" {
+			t.Errorf("RepoFullName=%q want %q (lowercase normalization)", p.RepoFullName, "foo/bar")
+		}
 	}
 }
 

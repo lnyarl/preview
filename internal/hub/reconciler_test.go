@@ -100,6 +100,7 @@ func (f *reconcilerFakeStore) ListByAgent(_ context.Context, _ string, _ []strin
 func (f *reconcilerFakeStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
 	return nil, store.ErrNotFound
 }
+func (f *reconcilerFakeStore) ListRepos(_ context.Context) ([]string, error) { return nil, nil }
 func (f *reconcilerFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
 	return nil, nil
 }
