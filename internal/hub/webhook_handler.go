@@ -148,8 +148,12 @@ func PreviewToView(p store.Preview) PreviewView {
 	}
 }
 
+// webhookMaxBodyBytes 는 DoS 방지를 위한 webhook 페이로드 최대 크기 (M-3).
+const webhookMaxBodyBytes = 10 << 20 // 10 MiB
+
 func (h *WebhookHandler) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// 본문 raw 읽기 — HMAC 계산 후 JSON decode.
+	r.Body = http.MaxBytesReader(w, r.Body, webhookMaxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_payload", "read body failed")
