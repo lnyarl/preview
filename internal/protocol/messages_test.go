@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 )
@@ -86,6 +87,55 @@ func TestJobAssignDataRoundTrip(t *testing.T) {
 	if dec.PreviewID != src.PreviewID || dec.RepoURL != src.RepoURL ||
 		dec.CommitSHA != src.CommitSHA || len(dec.Labels) != 1 || dec.Labels[0] != "test" {
 		t.Fatalf("unexpected: %+v", dec)
+	}
+}
+
+// TestJobAssignDataBuildEnvRoundTrip (Phase 10 F-19, NF-Wire-2):
+// BuildEnv 가 있을 때 wire round-trip + 빈 map 일 때 omitempty 로 키 생략.
+func TestJobAssignDataBuildEnvRoundTrip(t *testing.T) {
+	src := JobAssignData{
+		PreviewID:    "p1",
+		RepoFullName: "acme/web",
+		RepoURL:      "https://github.com/acme/web.git",
+		CommitSHA:    "abc",
+		BuildEnv: map[string]string{
+			"DATABASE_URL": "postgres://x",
+			"API_KEY":      "k1",
+		},
+	}
+	env, err := NewEnvelope(TypeJobAssign, src)
+	if err != nil {
+		t.Fatalf("NewEnvelope: %v", err)
+	}
+	b, _ := json.Marshal(env)
+	var got Envelope
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var dec JobAssignData
+	if err := got.Decode(&dec); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(dec.BuildEnv) != 2 || dec.BuildEnv["DATABASE_URL"] != "postgres://x" || dec.BuildEnv["API_KEY"] != "k1" {
+		t.Fatalf("BuildEnv mismatch: %+v", dec.BuildEnv)
+	}
+}
+
+// TestJobAssignDataBuildEnvOmitempty (NF-Wire-2): nil/빈 map 일 때 wire JSON 에 키 자체 생략.
+func TestJobAssignDataBuildEnvOmitempty(t *testing.T) {
+	for name, src := range map[string]JobAssignData{
+		"nil":   {PreviewID: "p1", RepoFullName: "a/b", RepoURL: "u", CommitSHA: "s", BuildEnv: nil},
+		"empty": {PreviewID: "p1", RepoFullName: "a/b", RepoURL: "u", CommitSHA: "s", BuildEnv: map[string]string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, err := json.Marshal(src)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if bytes.Contains(b, []byte("build_env")) {
+				t.Fatalf("build_env key should be omitted; got: %s", b)
+			}
+		})
 	}
 }
 

@@ -83,13 +83,22 @@ type ReadyData struct {
 
 // JobAssignData 는 Hub 가 Claim 후 Agent 에게 전달하는 작업 본문.
 // Labels 는 preview 의 라벨 echo (Agent 측 진단용).
+//
+// Phase 10: BuildEnv 추가. Hub 의 dispatcher 가 dispatch 직전에 repo_secrets 에서
+// 해당 repo 의 (key,value) 묶음을 조회해 동봉한다. omitempty — 빈 map 이면 wire 에서
+// 키가 생략되어 레거시 Agent (Phase 9 이하) 호환 (결정 11).
+//
+// SECURITY: BuildEnv 는 평문(plaintext)으로 wire 위에 흐르므로 Hub→Agent 의 WS
+// 가 TLS 종단(reverse proxy 또는 hub https) 이라야 한다. README "Build secrets"
+// 섹션 / 결정 7 / 리스크 R-1 참조.
 type JobAssignData struct {
-	PreviewID    string   `json:"preview_id"`
-	RepoFullName string   `json:"repo_full_name"`
-	RepoURL      string   `json:"repo_url"`
-	CommitSHA    string   `json:"commit_sha"`
-	Branch       string   `json:"branch,omitempty"`
-	Labels       []string `json:"labels,omitempty"`
+	PreviewID    string            `json:"preview_id"`
+	RepoFullName string            `json:"repo_full_name"`
+	RepoURL      string            `json:"repo_url"`
+	CommitSHA    string            `json:"commit_sha"`
+	Branch       string            `json:"branch,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	BuildEnv     map[string]string `json:"build_env,omitempty"` // Phase 10
 }
 
 // StatusUpdateData 는 Agent 가 building → running → done|failed 전이 시
