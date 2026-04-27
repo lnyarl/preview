@@ -36,6 +36,7 @@ var viewsFS embed.FS
 type AdminUIHandler struct {
 	AgentStore       store.AgentStore
 	PreviewStore     store.PreviewStore
+	RepoSecrets      store.RepoSecretStore // Phase 10 (옵션 — nil 이면 /admin/repos 에 secret 카운트 0).
 	TokenGen         *token.Generator
 	Logger           *slog.Logger
 	Registry         *ConnRegistry  // 옵션 — online 카운트 정확도 향상.
@@ -71,9 +72,15 @@ func NewAdminUIHandler(as store.AgentStore, ps store.PreviewStore, tg *token.Gen
 		"agent_detail.gohtml",
 		"settings.gohtml",
 		"test_build.gohtml",
+		"repos.gohtml",
+		"repo_secrets.gohtml",
 	})
 	return h
 }
+
+// SetRepoSecrets 는 Phase 10 의 RepoSecretStore 를 주입한다 (옵션).
+// nil 일 때 /admin/repos 인덱스가 secret 카운트를 0 으로 표시하고 dispatcher hydration 도 skip.
+func (h *AdminUIHandler) SetRepoSecrets(rs store.RepoSecretStore) { h.RepoSecrets = rs }
 
 // SetRegistry 는 online 여부 카운트 보강용 ConnRegistry 를 주입한다 (옵션).
 func (h *AdminUIHandler) SetRegistry(reg *ConnRegistry) { h.Registry = reg }
@@ -104,6 +111,10 @@ func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/agents/{id}/test-build", h.testBuildForm)
 	mux.HandleFunc("POST /admin/agents/{id}/test-build", h.testBuildSubmit)
 	mux.HandleFunc("POST /admin/agents/{id}/teardowns", h.agentTeardowns)
+	// Phase 10: repo secrets.
+	mux.HandleFunc("GET /admin/repos", h.reposIndex)
+	mux.HandleFunc("GET /admin/repos/{owner}/{repo}/secrets", h.repoSecretsGet)
+	mux.HandleFunc("POST /admin/repos/{owner}/{repo}/secrets", h.repoSecretsPost)
 }
 
 // mustParsePages 는 layout.gohtml + 각 페이지를 합쳐 별도 *template.Template 로 만든다.

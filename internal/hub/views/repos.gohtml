@@ -1,0 +1,49 @@
+{{define "content"}}
+<hgroup>
+  <h1>Repositories</h1>
+  <h2>Build secrets per repo</h2>
+</hgroup>
+
+{{if .Error}}
+  <article role="alert">Error: {{.Error}}</article>
+{{end}}
+
+<p>
+  <small>
+    Repositories appear here either after a webhook delivers a preview, or after secrets are pre-registered below.
+    Names are case-insensitive (always stored lowercase).
+  </small>
+</p>
+
+{{if eq (len .Rows) 0}}
+  <p><em>No repositories yet — secrets pre-registered for new repos will show up here once you save them.</em></p>
+{{else}}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Repository</th>
+        <th scope="col">Secrets</th>
+        <th scope="col">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td><code>{{.RepoFullName}}</code></td>
+        <td>{{.SecretCount}} keys</td>
+        <td>
+          <a href="{{.EditURLPath}}" role="button" class="outline" style="height: fit-content;">Edit secrets</a>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{end}}
+
+<section style="margin-top:2rem">
+  <h3>Pre-register a repo</h3>
+  <p>To add secrets for a repo whose webhook hasn't fired yet, navigate directly to:</p>
+  <p><code>/admin/repos/{owner}/{repo}/secrets</code></p>
+  <p><small>The path segments are lowercased automatically (Phase 10 decision 15).</small></p>
+</section>
+{{end}}
