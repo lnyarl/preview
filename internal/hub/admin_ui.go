@@ -604,7 +604,8 @@ type previewDetailView struct {
 	Preview         previewDetailRow
 	AgentLine       string
 	PreviewURLs     map[string]string // Phase 6: service → URL (parsed from JSON)
-	Events          []eventRow
+	Events          []eventRow        // 최근 N개 (newest first)
+	OlderEvents     []eventRow        // 그 이전 이벤트들 (collapsed, newest first)
 	RebuildEnabled  bool
 	ConflictMessage string
 	Diagnosis       string // 사람이 읽을 수 있는 실패 원인 요약
@@ -670,8 +671,10 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		h.Logger.Warn("admin_ui_preview_events_failed", "err", err.Error(), "preview_id", id)
 		events = nil
 	}
+	// 역순(최신 먼저)으로 변환
 	rows := make([]eventRow, 0, len(events))
-	for _, e := range events {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
 		from := "NULL"
 		if e.FromStatus != nil {
 			from = *e.FromStatus
@@ -682,6 +685,14 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			ToStatus:   e.ToStatus,
 			Message:    e.Message,
 		})
+	}
+	// 최근 5개는 바로 표시, 나머지는 접힌 상태
+	const recentEventCount = 5
+	recentRows := rows
+	var olderRows []eventRow
+	if len(rows) > recentEventCount {
+		recentRows = rows[:recentEventCount]
+		olderRows = rows[recentEventCount:]
 	}
 	agentLine := "-"
 	if p.AssignedAgentID != nil {
@@ -719,7 +730,8 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		},
 		AgentLine:       agentLine,
 		PreviewURLs:     previewURLs,
-		Events:          rows,
+		Events:          recentRows,
+		OlderEvents:     olderRows,
 		RebuildEnabled:  rebuildEnabled,
 		ConflictMessage: conflict,
 		Diagnosis:       diagnoseBuildError(errMsg),

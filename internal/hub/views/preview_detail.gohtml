@@ -55,7 +55,7 @@
 
 <section>
   <h3>Timeline</h3>
-  {{if eq (len .Events) 0}}
+  {{if and (eq (len .Events) 0) (eq (len .OlderEvents) 0)}}
     <p><em>No events recorded yet.</em></p>
   {{else}}
     <table>
@@ -76,6 +76,25 @@
       {{end}}
       </tbody>
     </table>
+
+    {{if .OlderEvents}}
+    <details style="margin-top:0.5em;">
+      <summary style="cursor:pointer; font-size:0.9em; color:var(--pico-muted-color);">
+        이전 로그 {{len .OlderEvents}}개 더 보기
+      </summary>
+      <table style="margin-top:0.5em;">
+        <tbody>
+        {{range .OlderEvents}}
+          <tr>
+            <td style="white-space:nowrap; font-size:0.85em; width:14em;">{{.TimeString}}</td>
+            <td style="white-space:nowrap; width:14em;"><code>{{.FromString}}</code> &rarr; <code>{{.ToStatus}}</code></td>
+            <td style="font-size:0.85em; word-break:break-all;">{{.Message}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </details>
+    {{end}}
   {{end}}
 </section>
 {{end}}
