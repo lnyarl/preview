@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -120,6 +121,10 @@ func (h *AdminUIHandler) Register(mux *http.ServeMux) {
 
 // mustParsePages 는 layout.gohtml + 각 페이지를 합쳐 별도 *template.Template 로 만든다.
 // 각 페이지는 자기 파일에 `{{define "content"}}...{{end}}` 를 가지므로 페이지마다 트리가 분리된다.
+//
+// Phase 12: layout 파싱 시 adminFuncs() 를 Funcs() 로 등록한다 — 모든 페이지가 layout
+// 트리를 공유하므로 한 곳에서 등록하면 statusBadge / navActive helper 가 어디서든 호출 가능
+// (phase-12-ux-consistency.md §3 결정 1).
 func mustParsePages(pages []string) map[string]*template.Template {
 	out := make(map[string]*template.Template, len(pages))
 	layoutBytes, err := viewsFS.ReadFile("views/layout.gohtml")
@@ -132,11 +137,86 @@ func mustParsePages(pages []string) map[string]*template.Template {
 			panic(fmt.Sprintf("admin_ui: read %s: %v", p, err))
 		}
 		// template.Must — fail-fast on parse error at startup (결정 5).
-		t := template.Must(template.New(p).Parse(string(layoutBytes)))
+		t := template.Must(template.New(p).Funcs(adminFuncs()).Parse(string(layoutBytes)))
 		t = template.Must(t.Parse(string(pageBytes)))
 		out[p] = t
 	}
 	return out
+}
+
+// adminFuncs 는 모든 admin 페이지가 공유하는 template helper 셋을 반환한다.
+// mustParsePages 의 layout 파싱 단계에서 Funcs() 로 등록된다
+// (phase-12-ux-consistency.md §3 결정 1, §5).
+func adminFuncs() template.FuncMap {
+	return template.FuncMap{
+		"statusBadge": statusBadge,
+		"navActive":   navActive,
+	}
+}
+
+// statusBadge 는 preview status 문자열을 색·라운드를 가진 inline element 로 변환해 반환한다.
+// 매핑 (phase-12-ux-consistency.md §5 표):
+//   - queued/assigned: gray (Pico secondary 토큰)
+//   - building       : blue (Pico primary 토큰)
+//   - running        : <mark>running</mark> (Pico mark — green 계열)
+//   - teardown       : orange (#fff3cd / #856404 — Pico 토큰에 직접 매칭이 없어 inline 색)
+//   - done           : muted gray
+//   - failed         : red
+//   - 그 외          : escape 후 plain <span> (XSS 안전망 — NF-2)
+//
+// 본 helper 는 입력 status 를 항상 html.EscapeString 로 escape 한 뒤 삽입하므로,
+// template.HTML 반환은 안전하다.
+func statusBadge(status string) template.HTML {
+	const pillBase = "display:inline-block; padding:0.1em 0.55em; border-radius:10px; font-size:0.85em;"
+	esc := html.EscapeString(status)
+	switch status {
+	case "queued", "assigned":
+		return template.HTML(fmt.Sprintf(
+			`<span class="status-pill" style="%s background:var(--pico-secondary-background); color:var(--pico-secondary)">%s</span>`,
+			pillBase, esc))
+	case "building":
+		return template.HTML(fmt.Sprintf(
+			`<span class="status-pill" style="%s background:var(--pico-primary-background); color:var(--pico-primary)">%s</span>`,
+			pillBase, esc))
+	case "running":
+		return template.HTML("<mark>" + esc + "</mark>")
+	case "teardown":
+		return template.HTML(fmt.Sprintf(
+			`<span class="status-pill" style="%s background:#fff3cd; color:#856404">%s</span>`,
+			pillBase, esc))
+	case "done":
+		return template.HTML(fmt.Sprintf(
+			`<span class="status-pill" style="%s color:var(--pico-muted-color)">%s</span>`,
+			pillBase, esc))
+	case "failed":
+		return template.HTML(fmt.Sprintf(
+			`<span class="status-pill" style="%s background:#f8d7da; color:var(--pico-color-red-500)">%s</span>`,
+			pillBase, esc))
+	default:
+		// 알 수 없는 status — escape 후 plain <span> (NF-2 보안 안전망).
+		return template.HTML("<span>" + esc + "</span>")
+	}
+}
+
+// navActive 는 nav 링크의 active 여부를 결정해 aria-current 속성과 강조 클래스/스타일을
+// 합친 attribute 문자열을 반환한다. 매칭 규칙(모든 nav 항목 공통):
+//
+//	match := currentPath == linkPath || strings.HasPrefix(currentPath, linkPath+"/")
+//
+// 즉 정확 일치이거나 `linkPath/` 로 시작할 때만 active. (단순 HasPrefix 는
+// `/admin/agents-history` 같은 경계 누수 위험이 있어 `linkPath+"/"` 접미사 강제 —
+// phase-12-ux-consistency.md §3 결정 3.)
+//
+// `class="nav-active"` 는 본 Phase 시점에서 시각에 영향 없는 dead identifier 지만
+// 후속 Phase 의 별도 CSS 도입 시 selector hook 으로 둔다 (결정 9).
+//
+// 입력은 코드 상수 + URL.Path 라 별도 escape 가 필요하지 않으며, 반환 문자열은 모두
+// 정적 ASCII 이므로 attribute 컨텍스트 안전.
+func navActive(currentPath, linkPath string) template.HTMLAttr {
+	if currentPath == linkPath || strings.HasPrefix(currentPath, linkPath+"/") {
+		return template.HTMLAttr(` aria-current="page" class="nav-active" style="font-weight:700; color:var(--pico-primary)"`)
+	}
+	return template.HTMLAttr("")
 }
 
 // renderHTML 은 layout 템플릿을 실행해 응답에 쓴다.
