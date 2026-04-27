@@ -64,6 +64,7 @@ type Runner struct {
 	maxJobs            int         // Phase 5: 동시 슬롯 한도 (NewRunner default = 1).
 
 	jobs     sync.Map    // previewID -> *runningJob
+	building sync.Map    // previewID -> struct{}: 빌드 진행 중인 ID (jobs 등록 전 HELLO 누락 방지)
 	paused   atomic.Bool // Phase 3: Pause() 후 신규 JOB_ASSIGN 거절.
 	inFlight atomic.Int64
 }
@@ -89,15 +90,27 @@ func (r *Runner) SetTraefikPort(port int) {
 // Phase 8: orphan cleanup 의 cmd 주입 경로 (결정 2 옵션 (b)).
 func (r *Runner) Cmd() CmdRunner { return r.cmd }
 
-// RunningPreviewIDs 는 jobs 맵에 있는 previewID 슬라이스 (HELLO.RunningPreviews 채움용).
+// RunningPreviewIDs 는 실행 중(jobs)이거나 빌드 중(building)인 previewID 슬라이스를 반환한다.
+// HELLO.RunningPreviews 에 포함돼야 Hub 의 syncOnHello 가 "agent restart lost container" 로
+// 오판하지 않는다.
 func (r *Runner) RunningPreviewIDs() []string {
-	out := []string{}
+	seen := map[string]struct{}{}
 	r.jobs.Range(func(k, _ any) bool {
 		if id, ok := k.(string); ok {
-			out = append(out, id)
+			seen[id] = struct{}{}
 		}
 		return true
 	})
+	r.building.Range(func(k, _ any) bool {
+		if id, ok := k.(string); ok {
+			seen[id] = struct{}{}
+		}
+		return true
+	})
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
 	return out
 }
 
@@ -151,10 +164,12 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 		return nil
 	}
 	r.inFlight.Add(1)
+	r.building.Store(pid, struct{}{})
 	// checkedOutWorktree 는 Checkout 성공 후 설정된다. 빌드가 실패해 jobs 맵에 등록되지 않은
 	// 경우 defer 가 worktree 를 정리해 Re-run 시 "worktree already exists" 오류를 방지한다.
 	var checkedOutWorktree string
 	defer func() {
+		r.building.Delete(pid)
 		r.inFlight.Add(-1)
 		if checkedOutWorktree != "" {
 			if _, running := r.jobs.Load(pid); !running {
