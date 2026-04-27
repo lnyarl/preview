@@ -1,4 +1,8 @@
 {{define "content"}}
+<nav aria-label="breadcrumb" style="margin-bottom:0.5rem; font-size:0.9em;">
+  <a href="/admin/previews">Previews</a> › <span>{{if eq .Preview.PrNumber 0}}Test Build{{else}}PR #{{.Preview.PrNumber}}{{end}} — {{.Preview.RepoFullName}}</span>
+</nav>
+
 <hgroup>
   <h1>{{.Title}}</h1>
   <h2>Preview detail and timeline</h2>

@@ -1,10 +1,12 @@
 {{define "content"}}
+<nav aria-label="breadcrumb" style="margin-bottom:0.5rem; font-size:0.9em;">
+  <a href="/admin/agents">Agents</a> › <span>{{.Name}}</span>
+</nav>
+
 <hgroup>
   <h1>Agent: {{.Name}}</h1>
   <h2>Status: {{.Status}}{{if .LastSeenString}} · Last seen: {{.LastSeenString}}{{end}}</h2>
 </hgroup>
-
-<p><a href="/admin/agents">&larr; Back to agents</a></p>
 
 <p><a href="/admin/agents/{{.AgentID}}/test-build" role="button">Test Build</a></p>
 
