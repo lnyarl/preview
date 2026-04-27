@@ -31,7 +31,7 @@
     <dt>Branch</dt><dd><code>{{.Preview.Branch}}</code></dd>
     <dt>Commit</dt><dd><code>{{if .Preview.CommitSha}}{{.Preview.CommitSha}}{{else}}<em>not set</em>{{end}}</code></dd>
     <dt>Source</dt><dd>{{if .Preview.IsAdhoc}}Adhoc (manual){{else}}Webhook{{end}}</dd>
-    <dt>Agent</dt><dd>{{.AgentLine}}</dd>
+    <dt>Agent</dt><dd>{{if .AgentID}}<a href="/admin/agents/{{.AgentID}}">{{.AgentLine}}</a>{{else}}{{.AgentLine}}{{end}}</dd>
     <dt>URLs</dt>
     <dd>
       {{if .PreviewURLs}}

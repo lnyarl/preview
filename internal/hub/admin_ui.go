@@ -786,10 +786,13 @@ type previewDetailRow struct {
 }
 
 type previewDetailView struct {
-	Title           string
-	RequestPath     string // Phase 12: layout nav active 매칭용 (r.URL.Path).
-	Preview         previewDetailRow
-	AgentLine       string
+	Title       string
+	RequestPath string // Phase 12: layout nav active 매칭용 (r.URL.Path).
+	Preview     previewDetailRow
+	AgentLine   string
+	// AgentID 는 Phase 15 D-2 의 Agent cross-link 분기용. 비어있으면 plain text,
+	// 채워져 있으면 /admin/agents/{AgentID} 로 가는 <a> 가 출력된다.
+	AgentID         string
 	PreviewURLs     map[string]string // Phase 6: service → URL (parsed from JSON)
 	Events          []eventRow        // 최근 N개 (newest first)
 	OlderEvents     []eventRow        // 그 이전 이벤트들 (collapsed, newest first)
@@ -897,7 +900,9 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		olderRows = rows[recentEventCount:]
 	}
 	agentLine := "-"
+	agentID := ""
 	if p.AssignedAgentID != nil {
+		agentID = *p.AssignedAgentID
 		agentLine = *p.AssignedAgentID
 		if p.AgentHost != nil && p.AgentPort != nil {
 			agentLine = fmt.Sprintf("%s (%s:%d)", *p.AssignedAgentID, *p.AgentHost, *p.AgentPort)
@@ -933,6 +938,7 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 			IsAdhoc:      p.IsAdhoc,
 		},
 		AgentLine:       agentLine,
+		AgentID:         agentID,
 		PreviewURLs:     previewURLs,
 		Events:          recentRows,
 		OlderEvents:     olderRows,
