@@ -136,6 +136,45 @@ func (q *Queries) GetActivePreviewByRepoAndPR(ctx context.Context, arg GetActive
 	return i, err
 }
 
+const getAdhocPreviewByBranch = `-- name: GetAdhocPreviewByBranch :one
+SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls, is_adhoc FROM previews
+WHERE repo_full_name = ?
+  AND branch = ?
+  AND is_adhoc = 1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetAdhocPreviewByBranchParams struct {
+	RepoFullName string `json:"repo_full_name"`
+	Branch       string `json:"branch"`
+}
+
+func (q *Queries) GetAdhocPreviewByBranch(ctx context.Context, arg GetAdhocPreviewByBranchParams) (Preview, error) {
+	row := q.db.QueryRowContext(ctx, getAdhocPreviewByBranch, arg.RepoFullName, arg.Branch)
+	var i Preview
+	err := row.Scan(
+		&i.ID,
+		&i.RepoFullName,
+		&i.PrNumber,
+		&i.CommitSha,
+		&i.Branch,
+		&i.Status,
+		&i.AssignedAgentID,
+		&i.ContainerID,
+		&i.AgentHost,
+		&i.AgentPort,
+		&i.Labels,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RepoCloneUrl,
+		&i.PreviewUrls,
+		&i.IsAdhoc,
+	)
+	return i, err
+}
+
 const getPreviewByID = `-- name: GetPreviewByID :one
 SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls, is_adhoc FROM previews WHERE id = ?
 `

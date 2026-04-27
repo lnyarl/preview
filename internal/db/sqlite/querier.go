@@ -17,6 +17,7 @@ type Querier interface {
 	DeleteRepoSecret(ctx context.Context, arg DeleteRepoSecretParams) error
 	FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error)
 	GetActivePreviewByRepoAndPR(ctx context.Context, arg GetActivePreviewByRepoAndPRParams) (Preview, error)
+	GetAdhocPreviewByBranch(ctx context.Context, arg GetAdhocPreviewByBranchParams) (Preview, error)
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
 	GetAgentByName(ctx context.Context, name string) (Agent, error)
 	GetPreviewByID(ctx context.Context, id string) (Preview, error)
