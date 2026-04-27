@@ -13,6 +13,8 @@ type Querier interface {
 	ClaimPreview(ctx context.Context, arg ClaimPreviewParams) (Preview, error)
 	CreateAgent(ctx context.Context, arg CreateAgentParams) error
 	DeleteAgent(ctx context.Context, id string) error
+	DeleteAllRepoSecretsFor(ctx context.Context, repoFullName string) error
+	DeleteRepoSecret(ctx context.Context, arg DeleteRepoSecretParams) error
 	FindPreviewByHost(ctx context.Context, prNumber int64) (Preview, error)
 	GetActivePreviewByRepoAndPR(ctx context.Context, arg GetActivePreviewByRepoAndPRParams) (Preview, error)
 	GetAgentByID(ctx context.Context, id string) (Agent, error)
@@ -25,7 +27,10 @@ type Querier interface {
 	ListAllPreviews(ctx context.Context) ([]Preview, error)
 	ListByAgent(ctx context.Context, arg ListByAgentParams) ([]Preview, error)
 	ListPreviewEvents(ctx context.Context, arg ListPreviewEventsParams) ([]PreviewEvent, error)
+	ListPreviewRepos(ctx context.Context) ([]string, error)
 	ListQueuedPreviewsForLabels(ctx context.Context) ([]Preview, error)
+	ListRepoSecretRepos(ctx context.Context) ([]string, error)
+	ListRepoSecrets(ctx context.Context, repoFullName string) ([]RepoSecret, error)
 	ListRunningPreviewsByAgent(ctx context.Context, assignedAgentID sql.NullString) ([]Preview, error)
 	ListStaleAssignedPreviews(ctx context.Context, updatedAt string) ([]Preview, error)
 	ResetAllAssignedPreviews(ctx context.Context, updatedAt string) (int64, error)
@@ -34,6 +39,7 @@ type Querier interface {
 	UpdatePreviewStatus(ctx context.Context, arg UpdatePreviewStatusParams) error
 	UpdatePreviewStatusFields(ctx context.Context, arg UpdatePreviewStatusFieldsParams) (int64, error)
 	UpsertPreview(ctx context.Context, arg UpsertPreviewParams) (Preview, error)
+	UpsertRepoSecret(ctx context.Context, arg UpsertRepoSecretParams) error
 }
 
 var _ Querier = (*Queries)(nil)

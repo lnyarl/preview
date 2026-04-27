@@ -160,6 +160,11 @@ type PreviewStore interface {
 	// 없으면 ErrNotFound. Phase 9 webhook synchronize 분기 (Decision Matrix Case B) 에서
 	// 기존 active 가 있는지 확인하기 위해 사용한다.
 	GetActiveByRepoAndPR(ctx context.Context, repoFullName string, prNumber int) (*Preview, error)
+
+	// ListRepos 는 previews 테이블의 distinct repo_full_name 을 정렬 반환한다.
+	// Phase 10 (결정 14): /admin/repos 인덱스 페이지가 repo_secrets 와 union 하기 위한
+	// 진입점. SQL DISTINCT 를 사용해 메모리 폭주 없이 N→K 축소를 DB 측에서 수행.
+	ListRepos(ctx context.Context) ([]string, error)
 }
 
 // PreviewEvent 는 preview_events 한 row 의 도메인 표현.
@@ -171,4 +176,36 @@ type PreviewEvent struct {
 	ToStatus   string
 	Message    string
 	CreatedAt  time.Time
+}
+
+// RepoSecret 은 repo_secrets 한 행의 도메인 표현 (Phase 10).
+//
+// Value 는 plaintext (Phase 10 결정 7 — 후속 Phase 에서 envelope encryption 으로
+// in-place 마이그레이션 예정). 본 구조체는 절대 마샬링되어 와이어로 흘러가지 않으며,
+// JOB_ASSIGN 의 BuildEnv 는 map[string]string 으로 별도 빌드된다.
+//
+// RepoFullName 은 store 진입점에서 lowercase 정규화된 형태가 항상 유지된다 (결정 15).
+type RepoSecret struct {
+	RepoFullName string
+	Key          string
+	Value        string
+	UpdatedAt    time.Time
+}
+
+// RepoSecretStore 는 repo_secrets 테이블에 대한 이식성 있는 저장소 인터페이스 (Phase 10).
+//
+// 단일 진입점:
+//   - List: 한 repo 의 모든 secret 행 (key 정렬)
+//   - Upsert: 1 행 INSERT 또는 value 갱신
+//   - Delete: 1 행 삭제
+//   - DeleteAllFor: repo 단위 일괄 삭제 (현재 Admin UI 에선 미사용 — 추후 repo 삭제 동선용)
+//   - ListRepos: distinct repo_full_name (인덱스 페이지용)
+//
+// 결정 15: 모든 메서드는 입력 repoFullName 을 lowercase 로 정규화한 뒤 사용한다.
+type RepoSecretStore interface {
+	List(ctx context.Context, repoFullName string) ([]RepoSecret, error)
+	Upsert(ctx context.Context, s RepoSecret) error
+	Delete(ctx context.Context, repoFullName, key string) error
+	DeleteAllFor(ctx context.Context, repoFullName string) error
+	ListRepos(ctx context.Context) ([]string, error)
 }

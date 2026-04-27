@@ -93,3 +93,8 @@ SELECT * FROM preview_events
 WHERE preview_id = ?
 ORDER BY created_at ASC, id ASC
 LIMIT ? OFFSET ?;
+
+-- name: ListPreviewRepos :many
+SELECT DISTINCT repo_full_name
+FROM previews
+ORDER BY repo_full_name;

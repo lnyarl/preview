@@ -46,3 +46,10 @@ type PreviewEvent struct {
 	Message    string         `json:"message"`
 	CreatedAt  string         `json:"created_at"`
 }
+
+type RepoSecret struct {
+	RepoFullName string `json:"repo_full_name"`
+	Key          string `json:"key"`
+	Value        string `json:"value"`
+	UpdatedAt    string `json:"updated_at"`
+}

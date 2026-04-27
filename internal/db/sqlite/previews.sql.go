@@ -411,6 +411,35 @@ func (q *Queries) ListPreviewEvents(ctx context.Context, arg ListPreviewEventsPa
 	return items, nil
 }
 
+const listPreviewRepos = `-- name: ListPreviewRepos :many
+SELECT DISTINCT repo_full_name
+FROM previews
+ORDER BY repo_full_name
+`
+
+func (q *Queries) ListPreviewRepos(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listPreviewRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var repo_full_name string
+		if err := rows.Scan(&repo_full_name); err != nil {
+			return nil, err
+		}
+		items = append(items, repo_full_name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueuedPreviewsForLabels = `-- name: ListQueuedPreviewsForLabels :many
 SELECT id, repo_full_name, pr_number, commit_sha, branch, status, assigned_agent_id, container_id, agent_host, agent_port, labels, error_message, created_at, updated_at, repo_clone_url, preview_urls, is_adhoc FROM previews WHERE status = 'queued' ORDER BY created_at ASC LIMIT 50
 `
