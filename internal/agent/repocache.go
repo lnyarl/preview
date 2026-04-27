@@ -224,15 +224,15 @@ func (c *RepoCache) Checkout(ctx context.Context, previewID, sha, branch string)
 		if ferr := c.fetch(ctx); ferr != nil {
 			return "", fmt.Errorf("repocache.Checkout: fetch: %w", ferr)
 		}
-		// bare clone 은 fetch refspec 이 +refs/heads/*:refs/heads/* 이므로
-		// 브랜치가 refs/heads/<branch> 에 직접 저장된다 (refs/remotes/origin/* 아님).
-		ref := "HEAD"
+		// fetch refspec: +refs/heads/*:refs/remotes/origin/*
+		// → fetch 후 refs/remotes/origin/<branch> 에 저장 (full path 로 DWIM 없이 resolve).
+		ref := "FETCH_HEAD"
 		if branch != "" {
-			ref = branch
+			ref = "refs/remotes/origin/" + branch
 		}
 		resolved, err := c.runner.Output(ctx, "git", "--git-dir="+c.repoDir, "rev-parse", ref+"^{commit}")
 		if err != nil {
-			return "", fmt.Errorf("repocache.Checkout: resolve ref %q: %w", ref, err)
+			return "", fmt.Errorf("repocache.Checkout: resolve ref %q: %w", branch, err)
 		}
 		sha = strings.TrimSpace(resolved)
 	} else {
