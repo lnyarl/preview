@@ -4,11 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile.hub
     command: ["migrate", "up"]
-    env_file:
-      - path: .env
-        required: false
+    env_file: .env
     environment:
-      DATABASE_URL: "sqlite:///data/hub.db"
+      DATABASE_URL: "sqlite:///data/hub.db"   # 컨테이너 내부 경로 (볼륨 마운트)
     volumes:
       - hub-data:/data
 
@@ -18,21 +16,11 @@ services:
       dockerfile: Dockerfile.hub
     ports:
       - "${HUB_ADDR:-3000}:3000"
-    env_file:
-      - path: .env
-        required: false
+    env_file: .env
     environment:
-      HUB_ADDR: ":3000"
-      DATABASE_URL: "sqlite:///data/hub.db"
-      DEV_AGENT_TOKEN: "agt_dev-local-token-do-not-use-in-prod"
-      LOG_LEVEL: "${LOG_LEVEL:-info}"
-      BCRYPT_COST: "${BCRYPT_COST:-10}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
-      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
-      PREVIEW_BASE_DOMAIN: "${PREVIEW_BASE_DOMAIN:-localhost}"
-      AGENT_DOWNLOAD_URL: "${AGENT_DOWNLOAD_URL:-}"
-      RECONCILE_INTERVAL: "${RECONCILE_INTERVAL:-1m}"
-      STALE_ASSIGNED_AFTER: "${STALE_ASSIGNED_AFTER:-5m}"
+      HUB_ADDR: ":3000"                                      # 컨테이너 내부는 항상 3000
+      DATABASE_URL: "sqlite:///data/hub.db"                  # 컨테이너 내부 경로
+      DEV_AGENT_TOKEN: "agt_dev-local-token-do-not-use-in-prod"  # 고정 dev 토큰
     volumes:
       - hub-data:/data
     depends_on:
@@ -49,9 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    env_file:
-      - path: .env
-        required: false
+    env_file: .env
     command:
       - start
       - --hub-url=ws://hub:3000/agent/ws
