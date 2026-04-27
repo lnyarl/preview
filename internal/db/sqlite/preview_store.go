@@ -209,7 +209,10 @@ func (s *PreviewStore) UpdateStatus(ctx context.Context, id string, fromStatus, 
 		// message 인자를 error_message 로도 사용 (webhook 호환).
 		params.ErrorMessage = sql.NullString{String: message, Valid: true}
 	}
-	if fields.AssignedAgentID != nil {
+	// assigned_agent_id 는 FK 제약이 있으므로 빈 문자열을 NULL 로 처리한다.
+	// COALESCE(NULL, existing) = existing — 값이 보존되며 FK violation 이 발생하지 않는다.
+	// assigned_agent_id 를 명시적으로 NULL 로 초기화하려면 별도 쿼리를 사용한다.
+	if fields.AssignedAgentID != nil && *fields.AssignedAgentID != "" {
 		params.AssignedAgentID = sql.NullString{String: *fields.AssignedAgentID, Valid: true}
 	}
 	if _, err := qtx.UpdatePreviewStatusFields(ctx, params); err != nil {
