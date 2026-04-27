@@ -508,3 +508,128 @@ func TestRunnerHandleInFlightPauseBlocksReady(t *testing.T) {
 		t.Fatalf("ReadySender calls=%d want 0 (paused mid-handle)", got)
 	}
 }
+
+// shaResolveCmd 는 worktreeFileRunner 와 같은 Run 동작을 유지하면서, Output("git rev-parse HEAD")
+// 호출에 대해서만 미리 설정된 sha 를 반환하는 cmd. F-11 / F-21 / NF-8 검증용.
+type shaResolveCmd struct {
+	mu        sync.Mutex
+	calls     [][]string
+	outCalls  [][]string
+	revParse  string // "" 면 Output 이 에러를 반환하도록 한다.
+	outputErr error
+}
+
+func (c *shaResolveCmd) Run(ctx context.Context, name string, args ...string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, append([]string{name}, args...))
+	return nil
+}
+
+func (c *shaResolveCmd) Output(ctx context.Context, name string, args ...string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.outCalls = append(c.outCalls, append([]string{name}, args...))
+	if c.outputErr != nil {
+		return "", c.outputErr
+	}
+	// git rev-parse HEAD 시나리오만 처리. 그 외에는 빈 문자열.
+	joined := strings.Join(args, " ")
+	if name == "git" && strings.Contains(joined, "rev-parse") {
+		if c.revParse == "" {
+			return "", errors.New("rev-parse failed (test fake)")
+		}
+		return c.revParse, nil
+	}
+	return "", nil
+}
+
+// TestRunnerSendsBuildingTwiceWithSha (F-21, F-11): Handle 가 building STATUS_UPDATE 를
+// 두 번 송신하며, 첫 번째는 CommitSHA=nil, 두 번째는 worktree HEAD resolve 결과 동봉.
+func TestRunnerSendsBuildingTwiceWithSha(t *testing.T) {
+	root := t.TempDir()
+	multi := NewMultiRepoCache(root, nil)
+	rc := NewRepoCache(root, testRepoURL, nil)
+	base := &fakeRunner{revParseOK: true}
+	rc.SetRunner(&worktreeFileRunner{base: base, mode: "dockerfile"})
+	multi.mu.Lock()
+	multi.repos[testRepoURL] = rc
+	multi.mu.Unlock()
+
+	docker := &fakeDocker{}
+	hub := &runnerFakeHub{}
+	cmd := &shaResolveCmd{revParse: "ff00aa"}
+	runner := NewRunner(docker, multi, cmd, hub, "127.0.0.1", nil)
+
+	if err := runner.Handle(context.Background(), testMsg("p1")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+
+	// building 횟수 ≥ 2 (첫 building + sha 동봉 building).
+	buildingUpdates := []protocol.StatusUpdateData{}
+	for _, u := range hub.updates {
+		if u.Status == "building" {
+			buildingUpdates = append(buildingUpdates, u)
+		}
+	}
+	if len(buildingUpdates) < 2 {
+		t.Fatalf("building updates=%d want >=2", len(buildingUpdates))
+	}
+	// 첫 번째: CommitSHA=nil.
+	if buildingUpdates[0].CommitSHA != nil {
+		t.Errorf("first building CommitSHA=%v want nil", buildingUpdates[0].CommitSHA)
+	}
+	// 두 번째: CommitSHA=&"ff00aa".
+	if buildingUpdates[1].CommitSHA == nil || *buildingUpdates[1].CommitSHA != "ff00aa" {
+		t.Errorf("second building CommitSHA=%v want &\"ff00aa\"", buildingUpdates[1].CommitSHA)
+	}
+	// rev-parse HEAD 가 호출됐는지.
+	revParseCalled := false
+	for _, c := range cmd.outCalls {
+		if len(c) >= 4 && c[0] == "git" && c[len(c)-2] == "rev-parse" && c[len(c)-1] == "HEAD" {
+			revParseCalled = true
+		}
+	}
+	if !revParseCalled {
+		t.Errorf("git rev-parse HEAD not called: %+v", cmd.outCalls)
+	}
+}
+
+// TestRunnerShaResolveFailureDoesNotAbortBuild (NF-8): rev-parse 실패해도 빌드는 진행되며,
+// 두 번째 building STATUS_UPDATE 의 CommitSHA 는 nil 로 남는다.
+func TestRunnerShaResolveFailureDoesNotAbortBuild(t *testing.T) {
+	root := t.TempDir()
+	multi := NewMultiRepoCache(root, nil)
+	rc := NewRepoCache(root, testRepoURL, nil)
+	base := &fakeRunner{revParseOK: true}
+	rc.SetRunner(&worktreeFileRunner{base: base, mode: "dockerfile"})
+	multi.mu.Lock()
+	multi.repos[testRepoURL] = rc
+	multi.mu.Unlock()
+
+	docker := &fakeDocker{}
+	hub := &runnerFakeHub{}
+	cmd := &shaResolveCmd{revParse: ""} // 빈 sha → Output 에러 반환.
+	runner := NewRunner(docker, multi, cmd, hub, "127.0.0.1", nil)
+
+	if err := runner.Handle(context.Background(), testMsg("p1")); err != nil {
+		t.Fatalf("Handle: %v (NF-8: 빌드 중단 안 함)", err)
+	}
+
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	// running 까지 도달했는지 확인.
+	last := hub.updates[len(hub.updates)-1]
+	if last.Status != "running" {
+		t.Fatalf("last status=%s want running (NF-8)", last.Status)
+	}
+	// building 메시지 모두 CommitSHA=nil (resolve 실패 → nil).
+	for i, u := range hub.updates {
+		if u.Status == "building" && u.CommitSHA != nil {
+			t.Errorf("building[%d] CommitSHA=%v want nil (resolve failed)", i, u.CommitSHA)
+		}
+	}
+}

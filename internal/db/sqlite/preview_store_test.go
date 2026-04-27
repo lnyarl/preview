@@ -2,6 +2,7 @@ package sqlitestore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -93,6 +94,9 @@ func TestPreviewStoreUpsertNewInsertsEvent(t *testing.T) {
 	}
 }
 
+// TestPreviewStoreUpsertExistingUpdatesNoEvent: Phase 9 자연키가 (repo, sha) 로 변경되었으므로
+// "같은 sha 두 번 Upsert → 두 번째는 UPDATE" 시나리오로 재작성. 같은 (repo, sha) 두 번째 호출은
+// branch / labels / repo_clone_url 만 갱신하고 status / event 는 변경 없음 (R2).
 func TestPreviewStoreUpsertExistingUpdatesNoEvent(t *testing.T) {
 	s := newTestPreviewStore(t)
 	ctx := context.Background()
@@ -103,17 +107,17 @@ func TestPreviewStoreUpsertExistingUpdatesNoEvent(t *testing.T) {
 		PrNumber:     42,
 		CommitSha:    "abc123",
 		Branch:       "feature/x",
-		Labels: []string{},
+		Labels:       []string{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 	if _, _, err := s.Upsert(ctx, p); err != nil {
 		t.Fatalf("Upsert(new): %v", err)
 	}
-	// 같은 (repo, pr) 두 번째 호출: sha 변경.
+	// 같은 (repo, sha) 두 번째 호출 — branch 만 변경 (멱등 + UPDATE 분기).
 	p2 := p
-	p2.ID = uuid.NewString() // INSERT 가 시도하지만 ON CONFLICT 로 UPDATE 됨; 기존 row id 유지.
-	p2.CommitSha = "def456"
+	p2.ID = uuid.NewString() // INSERT 가 시도하지만 ON CONFLICT 로 기존 row UPDATE; 기존 ID 유지.
+	p2.Branch = "feature/x-renamed"
 	p2.UpdatedAt = now.Add(time.Second)
 	created, prev, err := s.Upsert(ctx, p2)
 	if err != nil {
@@ -129,13 +133,16 @@ func TestPreviewStoreUpsertExistingUpdatesNoEvent(t *testing.T) {
 		t.Fatalf("prev.status=%s", prev.Status)
 	}
 
-	// 기존 row 의 commit_sha 가 갱신되었는지 확인.
+	// 기존 row 의 branch 가 갱신되었는지 확인 (sha 는 키이므로 그대로).
 	got, err := s.GetByID(ctx, p.ID)
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
 	}
-	if got.CommitSha != "def456" {
-		t.Fatalf("sha=%s want def456", got.CommitSha)
+	if got.CommitSha != "abc123" {
+		t.Fatalf("sha=%s want abc123 (key unchanged)", got.CommitSha)
+	}
+	if got.Branch != "feature/x-renamed" {
+		t.Fatalf("branch=%s want feature/x-renamed", got.Branch)
 	}
 	if got.Status != "queued" {
 		t.Fatalf("status=%s want queued (Upsert never changes status)", got.Status)
@@ -222,10 +229,11 @@ func TestPreviewStoreListAll(t *testing.T) {
 	s := newTestPreviewStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
+	// Phase 9: 자연키가 (repo, sha) 이므로 각 row 마다 unique sha 사용.
 	for i := 1; i <= 3; i++ {
 		p := store.Preview{
 			ID: uuid.NewString(), RepoFullName: "acme/web", PrNumber: i,
-			CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+			CommitSha: fmt.Sprintf("sha-%d", i), Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -252,13 +260,14 @@ func TestPreviewStoreListQueuedForCandidates(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	// 3개 INSERT, 가운데 1개를 UpdateStatus 로 teardown 으로 옮김 → 큐에 2개 남음.
+	// Phase 9: 자연키가 (repo, sha) 이므로 각 row 마다 unique sha.
 	ids := []string{}
 	for i := 1; i <= 3; i++ {
 		id := uuid.NewString()
 		ids = append(ids, id)
 		p := store.Preview{
 			ID: id, RepoFullName: "acme/web", PrNumber: i,
-			CommitSha: "abc", Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Second), UpdatedAt: now.Add(time.Duration(i) * time.Second),
+			CommitSha: fmt.Sprintf("sha-%d", i), Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Second), UpdatedAt: now.Add(time.Duration(i) * time.Second),
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -379,7 +388,7 @@ func TestClaimPreviewMultiCandidateRace(t *testing.T) {
 		ids = append(ids, id)
 		p := store.Preview{
 			ID: id, RepoFullName: "acme/web", PrNumber: i + 1,
-			CommitSha: "abc", Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Millisecond), UpdatedAt: now,
+			CommitSha: fmt.Sprintf("multi-sha-%d", i), Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Millisecond), UpdatedAt: now,
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -472,14 +481,14 @@ func TestPreviewStoreResetAllAssigned(t *testing.T) {
 	seedAgent(t, s, "agent-2")
 	ctx := context.Background()
 	now := time.Now().UTC()
-	// 2개 assigned + 1개 queued 상태 만들기.
+	// 2개 assigned + 1개 queued 상태 만들기. Phase 9: unique sha per row.
 	ids := []string{}
 	for i := 0; i < 3; i++ {
 		id := uuid.NewString()
 		ids = append(ids, id)
 		p := store.Preview{
 			ID: id, RepoFullName: "acme/web", PrNumber: i + 1,
-			CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+			CommitSha: fmt.Sprintf("sha-r-%d", i), Labels: []string{}, CreatedAt: now, UpdatedAt: now,
 		}
 		if _, _, err := s.Upsert(ctx, p); err != nil {
 			t.Fatalf("Upsert: %v", err)
@@ -599,5 +608,239 @@ func TestPreviewStoreStep3Lookups(t *testing.T) {
 	}
 	if empty != nil {
 		t.Fatalf("ListByAgent(empty)=%+v want nil", empty)
+	}
+}
+
+// TestPreviewStoreUpsertSameShaIdempotent (F-1, F-8 일부): 같은 (repo, sha) 두 번 →
+// row 1개. ON CONFLICT 가 발동해 두 번째 호출은 UPDATE.
+func TestPreviewStoreUpsertSameShaIdempotent(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 0; i < 2; i++ {
+		p := store.Preview{
+			ID: uuid.NewString(), RepoFullName: "acme/web", PrNumber: 7,
+			CommitSha: "shared-sha", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+		}
+		if _, _, err := s.Upsert(ctx, p); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+	list, err := s.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("rows=%d want 1 (idempotent on same sha)", len(list))
+	}
+}
+
+// TestPreviewStoreUpsertDifferentShaInsertsRows (F-1, F-7): 같은 (repo, pr) 다른 sha →
+// row 2 개. UNIQUE (repo, sha) 자연키 변경 검증.
+func TestPreviewStoreUpsertDifferentShaInsertsRows(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i, sha := range []string{"sha-A", "sha-B"} {
+		p := store.Preview{
+			ID: uuid.NewString(), RepoFullName: "acme/web", PrNumber: 7,
+			CommitSha: sha, Labels: []string{}, CreatedAt: now.Add(time.Duration(i) * time.Second), UpdatedAt: now,
+		}
+		if _, _, err := s.Upsert(ctx, p); err != nil {
+			t.Fatalf("Upsert(%s): %v", sha, err)
+		}
+	}
+	list, err := s.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("rows=%d want 2 (different sha → distinct rows)", len(list))
+	}
+}
+
+// TestPreviewStoreUpsertEmptyShaInsertsMultipleRows (F-9): sha="" (NULL) 두 번 → row 2개.
+// SQLite NULL UNIQUE 미발동 규칙 검증.
+func TestPreviewStoreUpsertEmptyShaInsertsMultipleRows(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 0; i < 2; i++ {
+		p := store.Preview{
+			ID: uuid.NewString(), RepoFullName: "acme/web", PrNumber: 7,
+			CommitSha: "", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+		}
+		if _, _, err := s.Upsert(ctx, p); err != nil {
+			t.Fatalf("Upsert(%d): %v", i, err)
+		}
+	}
+	list, err := s.ListAll(ctx)
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("rows=%d want 2 (empty sha → NULL → no UNIQUE conflict)", len(list))
+	}
+}
+
+// TestPreviewStoreUpsertIsAdhocFlagPreserved (F-2, F-3, F-5): IsAdhoc 필드 INSERT/READ.
+func TestPreviewStoreUpsertIsAdhocFlagPreserved(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Adhoc=true row.
+	idAdhoc := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: idAdhoc, RepoFullName: "x/y", PrNumber: 0,
+		CommitSha: "adhoc-sha", Labels: []string{}, IsAdhoc: true,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(adhoc): %v", err)
+	}
+	got, err := s.GetByID(ctx, idAdhoc)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if !got.IsAdhoc {
+		t.Errorf("IsAdhoc=false, want true (Adhoc row)")
+	}
+
+	// Default(false) row.
+	idWebhook := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: idWebhook, RepoFullName: "x/y", PrNumber: 1,
+		CommitSha: "webhook-sha", Labels: []string{},
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(webhook): %v", err)
+	}
+	got2, err := s.GetByID(ctx, idWebhook)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got2.IsAdhoc {
+		t.Errorf("IsAdhoc=true, want false (default)")
+	}
+}
+
+// TestPreviewStoreUpdateStatusFillsCommitShaWhenNull (F-4, F-22): NULL sha row 에
+// fields.CommitSha=&"abc" → row.CommitSha == "abc". 같은 BeginTx 안에서 SELECT → COALESCE
+// 채움 시퀀스를 행동으로 검증.
+func TestPreviewStoreUpdateStatusFillsCommitShaWhenNull(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: id, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	sha := "ff00aa"
+	if err := s.UpdateStatus(ctx, id, "", "building", "", now.Add(time.Second),
+		store.PreviewFields{CommitSha: &sha}); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+	got, _ := s.GetByID(ctx, id)
+	if got.CommitSha != "ff00aa" {
+		t.Fatalf("sha=%q want ff00aa", got.CommitSha)
+	}
+}
+
+// TestPreviewStoreUpdateStatusErrShaConflictRejectsDifferentSha (F-4, F-22): 이미 채워진 sha
+// row 에 다른 sha 보고 → ErrShaConflict + row.CommitSha 보존.
+func TestPreviewStoreUpdateStatusErrShaConflictRejectsDifferentSha(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: id, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	other := "def"
+	err := s.UpdateStatus(ctx, id, "", "building", "", now.Add(time.Second),
+		store.PreviewFields{CommitSha: &other})
+	if !errors.Is(err, store.ErrShaConflict) {
+		t.Fatalf("err=%v want ErrShaConflict", err)
+	}
+	got, _ := s.GetByID(ctx, id)
+	if got.CommitSha != "abc" {
+		t.Fatalf("sha=%q want abc (preserved)", got.CommitSha)
+	}
+}
+
+// TestPreviewStoreUpdateStatusSameShaIsHarmless (F-22): 이미 같은 sha 인 row 에 같은 sha
+// 보고 → 통과. (idempotent 보고 시나리오 — Agent 가 building 송신 두 번 또는 webhook race)
+func TestPreviewStoreUpdateStatusSameShaIsHarmless(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	id := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: id, RepoFullName: "acme/web", PrNumber: 1,
+		CommitSha: "abc", Labels: []string{}, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	same := "abc"
+	if err := s.UpdateStatus(ctx, id, "", "building", "", now.Add(time.Second),
+		store.PreviewFields{CommitSha: &same}); err != nil {
+		t.Fatalf("UpdateStatus(same sha): %v", err)
+	}
+	got, _ := s.GetByID(ctx, id)
+	if got.CommitSha != "abc" {
+		t.Fatalf("sha=%q want abc", got.CommitSha)
+	}
+	if got.Status != "building" {
+		t.Fatalf("status=%s want building", got.Status)
+	}
+}
+
+// TestPreviewStoreGetActiveByRepoAndPR (F-6): status ∈ {queued, assigned, building, running}
+// 만 매칭. done 만 있으면 ErrNotFound, queued+done 섞이면 queued 반환.
+func TestPreviewStoreGetActiveByRepoAndPR(t *testing.T) {
+	s := newTestPreviewStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// (1) done row 만 있음 → ErrNotFound.
+	doneID := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: doneID, RepoFullName: "acme/web", PrNumber: 5,
+		CommitSha: "done-sha", Labels: []string{},
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert(done): %v", err)
+	}
+	if err := s.UpdateStatus(ctx, doneID, "", "done", "", now.Add(time.Second), store.PreviewFields{}); err != nil {
+		t.Fatalf("UpdateStatus(done): %v", err)
+	}
+	if _, err := s.GetActiveByRepoAndPR(ctx, "acme/web", 5); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err=%v want ErrNotFound (only done rows)", err)
+	}
+
+	// (2) 같은 (repo, pr) 에 building row 추가 → building 반환.
+	buildID := uuid.NewString()
+	if _, _, err := s.Upsert(ctx, store.Preview{
+		ID: buildID, RepoFullName: "acme/web", PrNumber: 5,
+		CommitSha: "build-sha", Labels: []string{},
+		CreatedAt: now.Add(2 * time.Second), UpdatedAt: now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("Upsert(build): %v", err)
+	}
+	if err := s.UpdateStatus(ctx, buildID, "queued", "building", "", now.Add(3*time.Second), store.PreviewFields{}); err != nil {
+		t.Fatalf("UpdateStatus(build): %v", err)
+	}
+	got, err := s.GetActiveByRepoAndPR(ctx, "acme/web", 5)
+	if err != nil {
+		t.Fatalf("GetActiveByRepoAndPR: %v", err)
+	}
+	if got.ID != buildID {
+		t.Fatalf("id=%s want %s (building row)", got.ID, buildID)
 	}
 }

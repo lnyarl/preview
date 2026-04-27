@@ -4,7 +4,6 @@ package hub
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -102,8 +101,27 @@ func (f *adminUIFakePreviewStore) put(p store.Preview) {
 	f.rows[p.ID] = &cp
 }
 
-func (f *adminUIFakePreviewStore) Upsert(_ context.Context, _ store.Preview) (bool, *store.Preview, error) {
-	return false, nil, errors.New("not used")
+// Upsert: Phase 9 자연키 (repo, sha) 기반 in-memory 구현 + IsAdhoc 보존.
+// sha 가 빈 문자열이면 항상 신규 INSERT (NULL UNIQUE 미발동 시뮬레이션).
+func (f *adminUIFakePreviewStore) Upsert(_ context.Context, p store.Preview) (bool, *store.Preview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if p.CommitSha != "" {
+		for _, existing := range f.rows {
+			if existing.RepoFullName == p.RepoFullName && existing.CommitSha == p.CommitSha {
+				prev := *existing
+				existing.Branch = p.Branch
+				existing.Labels = p.Labels
+				existing.RepoCloneURL = p.RepoCloneURL
+				existing.UpdatedAt = p.UpdatedAt
+				return false, &prev, nil
+			}
+		}
+	}
+	p.Status = "queued"
+	cp := p
+	f.rows[p.ID] = &cp
+	return true, nil, nil
 }
 func (f *adminUIFakePreviewStore) GetByID(_ context.Context, id string) (*store.Preview, error) {
 	f.mu.Lock()
@@ -175,6 +193,11 @@ func (f *adminUIFakePreviewStore) ListPreviewEvents(_ context.Context, previewID
 		end = len(all)
 	}
 	return append([]store.PreviewEvent(nil), all[offset:end]...), nil
+}
+
+// Phase 9: GetActiveByRepoAndPR — admin UI 테스트는 webhook 분기를 다루지 않으므로 stub.
+func (f *adminUIFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
 }
 
 func newAdminUIHandler() *AdminUIHandler {
@@ -432,5 +455,44 @@ func TestAdminAgentsListHasDetailLink(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, `href="/admin/agents/a1"`) {
 		t.Errorf("expected detail link href=/admin/agents/a1 in body:\n%s", body)
+	}
+}
+
+// TestAdminTestBuildSubmitMultipleShasCreateRowsAllAdhoc (F-10): Admin Test Build 두 번,
+// 같은 repo + 다른 sha → row 2개, 모두 IsAdhoc=true.
+func TestAdminTestBuildSubmitMultipleShasCreateRowsAllAdhoc(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	as := newAdminUIAgentStore()
+	ps := newAdminUIPreviewStore()
+	tg := token.NewGenerator(4)
+	ui := NewAdminUIHandler(as, ps, tg, logger)
+
+	_ = as.Create(context.Background(), store.Agent{
+		ID: "a1", Name: "agent-1", Status: "online", CreatedAt: time.Now().UTC(),
+	})
+
+	for i, sha := range []string{"sha-A", "sha-B"} {
+		form := "repo_clone_url=https://github.com/acme/web.git&branch=main&commit_sha=" + sha
+		req := httptest.NewRequest("POST", "/admin/agents/a1/test-build", strings.NewReader(form))
+		req.SetPathValue("id", "a1")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		ui.testBuildSubmit(rr, req)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("submit[%d] status=%d want 303 (sha=%s)", i, rr.Code, sha)
+		}
+	}
+
+	all, _ := ps.ListAll(context.Background())
+	if len(all) != 2 {
+		t.Fatalf("rows=%d want 2 (different sha → distinct rows)", len(all))
+	}
+	for _, p := range all {
+		if !p.IsAdhoc {
+			t.Errorf("row %s IsAdhoc=false want true (Test Build)", p.ID)
+		}
+		if p.PrNumber != 0 {
+			t.Errorf("row %s PrNumber=%d want 0", p.ID, p.PrNumber)
+		}
 	}
 }

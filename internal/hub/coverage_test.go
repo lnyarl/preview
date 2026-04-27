@@ -167,6 +167,9 @@ func (f *statusFakeStore) ListAll(_ context.Context) ([]store.Preview, error) {
 func (f *statusFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
 	return nil, nil
 }
+func (f *statusFakeStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
 
 func TestStatusUpdaterOnStatusUpdate(t *testing.T) {
 	fs := newStatusFakeStore()

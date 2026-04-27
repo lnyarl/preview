@@ -71,6 +71,9 @@ func (f *syncFakePreviewStore) ListAll(_ context.Context) ([]store.Preview, erro
 func (f *syncFakePreviewStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
 	return nil, nil
 }
+func (f *syncFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
 
 // fakeTeardownSender 는 SendTeardown 호출을 capture.
 type fakeTeardownSender struct {

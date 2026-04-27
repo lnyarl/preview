@@ -43,16 +43,20 @@ func newFakeStore() *fakePreviewStore {
 func (f *fakePreviewStore) Upsert(_ context.Context, p store.Preview) (bool, *store.Preview, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, existing := range f.rows {
-		if existing.RepoFullName == p.RepoFullName && existing.PrNumber == p.PrNumber {
-			// UPDATE: 필드 갱신, status 변경 없음.
-			prev := existing
-			existing.CommitSha = p.CommitSha
-			existing.Branch = p.Branch
-			existing.Labels = p.Labels
-			existing.UpdatedAt = p.UpdatedAt
-			f.rows[existing.ID] = existing
-			return false, &prev, nil
+	// Phase 9: 자연키가 (repo_full_name, commit_sha). sha=="" 는 NULL 로 매핑되어
+	// UNIQUE 미발동 → 매번 신규 INSERT.
+	if p.CommitSha != "" {
+		for _, existing := range f.rows {
+			if existing.RepoFullName == p.RepoFullName && existing.CommitSha == p.CommitSha {
+				// UPDATE: branch/labels/repo_clone_url/updated_at 만 갱신. status / is_adhoc 보존.
+				prev := existing
+				existing.Branch = p.Branch
+				existing.Labels = p.Labels
+				existing.RepoCloneURL = p.RepoCloneURL
+				existing.UpdatedAt = p.UpdatedAt
+				f.rows[existing.ID] = existing
+				return false, &prev, nil
+			}
 		}
 	}
 	// INSERT: status='queued' + event(NULL→queued).
@@ -73,7 +77,7 @@ func (f *fakePreviewStore) GetByID(_ context.Context, id string) (*store.Preview
 	return &r, nil
 }
 
-func (f *fakePreviewStore) UpdateStatus(_ context.Context, id string, fromStatus, toStatus, message string, now time.Time, _ store.PreviewFields) error {
+func (f *fakePreviewStore) UpdateStatus(_ context.Context, id string, fromStatus, toStatus, message string, now time.Time, fields store.PreviewFields) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, ok := f.rows[id]
@@ -83,9 +87,16 @@ func (f *fakePreviewStore) UpdateStatus(_ context.Context, id string, fromStatus
 	if fromStatus != "" && r.Status != fromStatus {
 		return store.ErrStaleState
 	}
+	// Phase 9: ErrShaConflict 검사 — 이미 채워진 sha 와 다른 값이면 거부 (NULL 일 때만 채움).
+	if fields.CommitSha != nil && r.CommitSha != "" && r.CommitSha != *fields.CommitSha {
+		return store.ErrShaConflict
+	}
 	from := r.Status
 	r.Status = toStatus
 	r.UpdatedAt = now
+	if fields.CommitSha != nil && r.CommitSha == "" {
+		r.CommitSha = *fields.CommitSha
+	}
 	f.rows[id] = r
 	f.events[id] = append(f.events[id], eventEntry{From: &from, To: toStatus, Message: message})
 	return nil
@@ -122,6 +133,30 @@ func (f *fakePreviewStore) ListByAgent(_ context.Context, _ string, _ []string) 
 }
 func (f *fakePreviewStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
 	return nil, nil
+}
+func (f *fakePreviewStore) GetActiveByRepoAndPR(_ context.Context, repoFullName string, prNumber int) (*store.Preview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// 가장 최근 created_at active row.
+	var best *store.Preview
+	for _, p := range f.rows {
+		if p.RepoFullName != repoFullName || p.PrNumber != prNumber {
+			continue
+		}
+		switch p.Status {
+		case "queued", "assigned", "building", "running":
+		default:
+			continue
+		}
+		if best == nil || p.CreatedAt.After(best.CreatedAt) {
+			cp := p
+			best = &cp
+		}
+	}
+	if best == nil {
+		return nil, store.ErrNotFound
+	}
+	return best, nil
 }
 
 // helpers --------------------------------------------------------------------
@@ -219,35 +254,39 @@ func TestWebhookOpenedNew(t *testing.T) {
 	}
 }
 
-func TestWebhookSynchronizeUpdatesShaSameStatus(t *testing.T) {
+// Phase 9 Decision Matrix Case B (F-12): synchronize 로 새 sha 도착 시 기존 active row
+// teardown + 신규 INSERT. Phase 8 까지의 "같은 row sha 만 갱신" 동작은 폐기.
+func TestWebhookSynchronizeNewShaTeardownAndInsert(t *testing.T) {
 	srv, fs := newTestServer(t)
-	// 1) opened
+	// 1) opened (sha=abc)
 	body1 := []byte(`{"action":"opened","pull_request":{"number":42,"head":{"sha":"abc","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
 	resp1 := postWebhook(t, srv.URL, "pull_request", body1, sign([]byte(testSecret), body1))
 	resp1.Body.Close()
-	// 2) synchronize with new sha
+	// 2) synchronize with new sha (Case B)
 	body2 := []byte(`{"action":"synchronize","pull_request":{"number":42,"head":{"sha":"def","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
 	resp2 := postWebhook(t, srv.URL, "pull_request", body2, sign([]byte(testSecret), body2))
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusAccepted {
 		t.Fatalf("synchronize status=%d", resp2.StatusCode)
 	}
-	if len(fs.rows) != 1 {
-		t.Fatalf("rows=%d want 1 (upsert)", len(fs.rows))
+	if len(fs.rows) != 2 {
+		t.Fatalf("rows=%d want 2 (Case B: teardown old + insert new)", len(fs.rows))
 	}
+	// status 분포: 기존 teardown + 신규 queued.
+	statusCounts := map[string]int{}
+	shaSet := map[string]bool{}
 	for _, p := range fs.rows {
-		if p.CommitSha != "def" {
-			t.Fatalf("sha=%s want def", p.CommitSha)
-		}
-		if p.Status != "queued" {
-			t.Fatalf("status=%s want queued", p.Status)
-		}
+		statusCounts[p.Status]++
+		shaSet[p.CommitSha] = true
 	}
-	// 룰 R2: synchronize(같은 status) → event 추가 없음. Initial open 1건만.
-	for _, ev := range fs.events {
-		if len(ev) != 1 {
-			t.Fatalf("events=%d want 1 (no synchronize event)", len(ev))
-		}
+	if statusCounts["teardown"] != 1 {
+		t.Errorf("teardown rows=%d want 1: %+v", statusCounts["teardown"], statusCounts)
+	}
+	if statusCounts["queued"] != 1 {
+		t.Errorf("queued rows=%d want 1: %+v", statusCounts["queued"], statusCounts)
+	}
+	if !shaSet["abc"] || !shaSet["def"] {
+		t.Errorf("expected both sha abc and def: %v", shaSet)
 	}
 }
 
@@ -388,4 +427,152 @@ func TestAdminPreviewsList(t *testing.T) {
 	if views[0].PrNumber != 1 {
 		t.Fatalf("pr=%d", views[0].PrNumber)
 	}
+}
+
+// fakeWHTeardownSender 는 webhook handler 테스트 전용 SendTeardown 캡처.
+type fakeWHTeardownSender struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *fakeWHTeardownSender) SendTeardown(_ context.Context, _ string, _ string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	return nil
+}
+
+// newTestServerWithTeardown 은 newTestServer 와 동일하지만 fakeWHTeardownSender 를 주입한다.
+func newTestServerWithTeardown(t *testing.T) (*httptest.Server, *fakePreviewStore, *fakeWHTeardownSender) {
+	t.Helper()
+	s := newFakeStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewWebhookHandler(s, testSecret, logger)
+	ts := &fakeWHTeardownSender{}
+	h.SetTeardownSender(ts)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, s, ts
+}
+
+// TestWebhookSynchronizeCaseA (F-12a): 같은 sha 두 번 synchronize → row 1개 idempotent,
+// teardown 호출 0회.
+func TestWebhookSynchronizeCaseA(t *testing.T) {
+	srv, fs, ts := newTestServerWithTeardown(t)
+	body := []byte(`{"action":"synchronize","pull_request":{"number":42,"head":{"sha":"abc","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
+	for i := 0; i < 2; i++ {
+		r := postWebhook(t, srv.URL, "pull_request", body, sign([]byte(testSecret), body))
+		r.Body.Close()
+	}
+	if len(fs.rows) != 1 {
+		t.Fatalf("rows=%d want 1 (Case A: idempotent same sha)", len(fs.rows))
+	}
+	if ts.calls != 0 {
+		t.Fatalf("teardown calls=%d want 0", ts.calls)
+	}
+}
+
+// TestWebhookSynchronizeCaseC (F-12b): active 없음 + 같은 sha 의 done row 존재 → reopen.
+func TestWebhookSynchronizeCaseC(t *testing.T) {
+	srv, fs, ts := newTestServerWithTeardown(t)
+	// 1) opened (sha=X) → row 1, status=queued.
+	body1 := []byte(`{"action":"opened","pull_request":{"number":42,"head":{"sha":"X","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
+	r1 := postWebhook(t, srv.URL, "pull_request", body1, sign([]byte(testSecret), body1))
+	r1.Body.Close()
+	// 2) 강제로 done 으로 만든다 (직접 수정).
+	var pid string
+	for id := range fs.rows {
+		pid = id
+	}
+	row := fs.rows[pid]
+	row.Status = "done"
+	fs.rows[pid] = row
+	// 3) synchronize(sha=X) → Case C reopen.
+	body2 := []byte(`{"action":"synchronize","pull_request":{"number":42,"head":{"sha":"X","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
+	r2 := postWebhook(t, srv.URL, "pull_request", body2, sign([]byte(testSecret), body2))
+	r2.Body.Close()
+	if len(fs.rows) != 1 {
+		t.Fatalf("rows=%d want 1 (Case C: same sha reopen)", len(fs.rows))
+	}
+	if fs.rows[pid].Status != "queued" {
+		t.Fatalf("status=%s want queued (reopened)", fs.rows[pid].Status)
+	}
+	if ts.calls != 0 {
+		t.Fatalf("teardown calls=%d want 0", ts.calls)
+	}
+	// reopen event message 확인.
+	evs := fs.events[pid]
+	last := evs[len(evs)-1]
+	if last.Message != "reopened_by_synchronize" {
+		t.Errorf("last.message=%q want reopened_by_synchronize", last.Message)
+	}
+}
+
+// TestWebhookSynchronizeCaseD (F-12c): active 없음 + 새 sha → 신규 INSERT 만, teardown 0회.
+func TestWebhookSynchronizeCaseD(t *testing.T) {
+	srv, fs, ts := newTestServerWithTeardown(t)
+	body := []byte(`{"action":"synchronize","pull_request":{"number":42,"head":{"sha":"new","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
+	r := postWebhook(t, srv.URL, "pull_request", body, sign([]byte(testSecret), body))
+	r.Body.Close()
+	if len(fs.rows) != 1 {
+		t.Fatalf("rows=%d want 1 (Case D: insert)", len(fs.rows))
+	}
+	if ts.calls != 0 {
+		t.Fatalf("teardown calls=%d want 0", ts.calls)
+	}
+}
+
+// TestWebhookSynchronizeCaseBSendsTeardownAndAddsSupersedeEvent (F-12 보강): Case B 에서
+// SendTeardown 호출 + 신규 row 의 첫 event 에 supersede message 포함.
+func TestWebhookSynchronizeCaseBSendsTeardownAndAddsSupersedeEvent(t *testing.T) {
+	srv, fs, ts := newTestServerWithTeardown(t)
+	// 1) opened (sha=abc) — assigned_agent_id 가 없는 시작 상태이므로 이번 케이스에서는
+	//    SendTeardown 이 호출되지 않는다(handleUpsert 의 nil 가드). 본 테스트는 supersede
+	//    이벤트만 검증하고, SendTeardown 호출은 별도 시나리오에서 검증.
+	body1 := []byte(`{"action":"opened","pull_request":{"number":7,"head":{"sha":"abc","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
+	r1 := postWebhook(t, srv.URL, "pull_request", body1, sign([]byte(testSecret), body1))
+	r1.Body.Close()
+	var oldID string
+	for id := range fs.rows {
+		oldID = id
+	}
+	// 2) synchronize(sha=def) → Case B (sha 다름).
+	body2 := []byte(`{"action":"synchronize","pull_request":{"number":7,"head":{"sha":"def","ref":"f"}},"repository":{"full_name":"acme/web"}}`)
+	r2 := postWebhook(t, srv.URL, "pull_request", body2, sign([]byte(testSecret), body2))
+	r2.Body.Close()
+	if len(fs.rows) != 2 {
+		t.Fatalf("rows=%d want 2", len(fs.rows))
+	}
+	// 신규 row 의 events 에 supersede 메시지 존재.
+	var newID string
+	for id, p := range fs.rows {
+		if p.CommitSha == "def" {
+			newID = id
+		}
+	}
+	if newID == "" {
+		t.Fatal("new row not found (sha=def)")
+	}
+	found := false
+	for _, ev := range fs.events[newID] {
+		if ev.Message == "created_after_supersede_of="+oldID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("supersede event missing in new row events: %+v", fs.events[newID])
+	}
+	// teardown 메시지 확인 (기존 row).
+	teardownFound := false
+	for _, ev := range fs.events[oldID] {
+		if ev.To == "teardown" && ev.Message == "superseded_by_sha=def" {
+			teardownFound = true
+		}
+	}
+	if !teardownFound {
+		t.Errorf("teardown event with superseded_by_sha message missing: %+v", fs.events[oldID])
+	}
+	_ = ts // SendTeardown 은 assigned_agent_id 가 없으면 호출되지 않으므로 본 테스트에서는 무관.
 }

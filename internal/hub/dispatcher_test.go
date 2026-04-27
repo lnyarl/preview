@@ -64,6 +64,9 @@ func (f *dispFakePreviewStore) ListAll(ctx context.Context) ([]store.Preview, er
 func (f *dispFakePreviewStore) ListPreviewEvents(ctx context.Context, previewID string, limit, offset int) ([]store.PreviewEvent, error) {
 	return nil, nil
 }
+func (f *dispFakePreviewStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
+}
 
 // fakeAgentStore — GetByID 만 사용.
 type fakeAgentStore struct {
@@ -254,6 +257,9 @@ func (f *raceFakeStore) ListByAgent(_ context.Context, _ string, _ []string) ([]
 func (f *raceFakeStore) ListAll(_ context.Context) ([]store.Preview, error) { return nil, nil }
 func (f *raceFakeStore) ListPreviewEvents(_ context.Context, _ string, _, _ int) ([]store.PreviewEvent, error) {
 	return nil, nil
+}
+func (f *raceFakeStore) GetActiveByRepoAndPR(_ context.Context, _ string, _ int) (*store.Preview, error) {
+	return nil, store.ErrNotFound
 }
 
 // TestDispatcherClaimRace: 50 goroutine, 1 queued preview, 정확히 1 SendJobAssign.
