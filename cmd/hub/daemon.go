@@ -63,6 +63,8 @@ func runDaemon(args []string) error {
 
 	agentStore := sqlitestore.NewAgentStore(db)
 	previewStore := sqlitestore.NewPreviewStore(db)
+	// Phase 10: repo build secrets store (별도 Queries 인스턴스 — sqlc db wrapper 는 stateless).
+	repoSecretStore := sqlitestore.NewRepoSecretStore(sqlitestore.New(db))
 
 	// 결정 11(Phase 1): Hub 기동 bulk offline 리셋 (리스크 4 완화).
 	resetCount, err := agentStore.ResetAllOnline(ctx)
@@ -99,6 +101,7 @@ func runDaemon(args []string) error {
 	adminUI := hub.NewAdminUIHandler(agentStore, previewStore, tg, logger)
 	adminUI.SetRegistry(reg)
 	adminUI.SetConfig(cfg)
+	adminUI.SetRepoSecrets(repoSecretStore) // Phase 10
 	adminUI.AgentDownloadURL = cfg.AgentDownloadURL
 	admin.SetUI(adminUI)
 	webhook.SetUI(adminUI)
@@ -108,7 +111,7 @@ func runDaemon(args []string) error {
 	// Phase 6 (결정 6): RepoURLResolver 제거. RepoURL = preview.RepoCloneURL (webhook 에서 추출).
 	jobSender := hub.NewWSJobSender(reg)
 	adminUI.SetTeardownSender(jobSender)
-	dispatcher := hub.NewDispatcher(agentStore, previewStore, jobSender, logger)
+	dispatcher := hub.NewDispatcher(agentStore, previewStore, repoSecretStore, jobSender, logger)
 	adminUI.SetDispatcher(dispatcher)
 	statusUpdater := hub.NewStatusUpdater(previewStore, logger)
 	ws.SetReady(dispatcher)
