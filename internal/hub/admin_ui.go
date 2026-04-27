@@ -606,6 +606,20 @@ type previewDetailView struct {
 	RebuildEnabled  bool
 	ConflictMessage string
 	Diagnosis       string // 사람이 읽을 수 있는 실패 원인 요약
+	BuildOutput     string // docker/compose 실행 출력 (error_message 의 "(output: ...)" 부분)
+}
+
+// extractBuildOutput 은 execRunner.Run 이 만드는
+// "<cmd>: exit status N (output: <text>)" 형태의 에러 문자열에서
+// 실제 커맨드 출력 부분만 추출한다.
+func extractBuildOutput(msg string) string {
+	const marker = "(output: "
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		return ""
+	}
+	out := strings.TrimSuffix(msg[i+len(marker):], ")")
+	return strings.TrimSpace(out)
 }
 
 // diagnoseBuildError 는 raw 에러 메시지를 분석해 원인을 한 문장으로 반환한다.
@@ -732,6 +746,7 @@ func (h *AdminUIHandler) previewDetail(w http.ResponseWriter, r *http.Request) {
 		RebuildEnabled:  rebuildEnabled,
 		ConflictMessage: conflict,
 		Diagnosis:       diagnoseBuildError(errMsg),
+		BuildOutput:     extractBuildOutput(errMsg),
 	}
 	h.renderHTML(w, http.StatusOK, "preview_detail.gohtml", view)
 }

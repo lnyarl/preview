@@ -11,10 +11,13 @@
 {{if and (eq .Preview.Status "failed") .Diagnosis}}
   <article role="alert">
     <strong>실패 원인:</strong> {{.Diagnosis}}
+    {{if .BuildOutput}}
+    <pre style="margin:0.6em 0 0; white-space:pre-wrap; word-break:break-all; font-size:0.8em; background:var(--pico-code-background-color); padding:0.6em; border-radius:4px;">{{.BuildOutput}}</pre>
+    {{end}}
     {{if .Preview.ErrorMessage}}
     <details style="margin-top:0.5em;">
-      <summary style="cursor:pointer; font-size:0.85em;">Raw error</summary>
-      <pre style="margin:0.4em 0 0; white-space:pre-wrap; word-break:break-all; font-size:0.8em;">{{.Preview.ErrorMessage}}</pre>
+      <summary style="cursor:pointer; font-size:0.85em; color:var(--pico-muted-color);">전체 오류 보기</summary>
+      <pre style="margin:0.4em 0 0; white-space:pre-wrap; word-break:break-all; font-size:0.75em;">{{.Preview.ErrorMessage}}</pre>
     </details>
     {{end}}
   </article>
