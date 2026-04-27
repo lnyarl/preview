@@ -20,7 +20,7 @@ services:
     environment:
       HUB_ADDR: ":3000"                                      # 컨테이너 내부는 항상 3000
       DATABASE_URL: "sqlite:///data/hub.db"                  # 컨테이너 내부 경로
-      DEV_AGENT_TOKEN: "dev-local-token-do-not-use-in-prod"  # 고정 dev 토큰
+      DEV_AGENT_TOKEN: "agt_dev-local-token-do-not-use-in-prod"  # 고정 dev 토큰
     volumes:
       - hub-data:/data
     depends_on:
@@ -41,12 +41,12 @@ services:
     command:
       - start
       - --hub-url=ws://hub:3000/agent/ws
-      - --token=dev-local-token-do-not-use-in-prod
-      - --repo-url=${AGENT_REPO_URL}
+      - --token=agt_dev-local-token-do-not-use-in-prod
       - --advertise-host=${AGENT_ADVERTISE_HOST:-host.docker.internal}
       - --work-dir=/workspace
       - --prefetch-interval=${AGENT_PREFETCH_INTERVAL:-5m}
       - --max-jobs=${AGENT_MAX_JOBS:-1}
+      - --github-token=${GITHUB_TOKEN:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - agent-workspace:/workspace
