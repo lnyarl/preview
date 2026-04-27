@@ -158,7 +158,7 @@ func TestRepoCacheCheckoutFetchSkipWhenShaPresent(t *testing.T) {
 	if err := c.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	wt, err := c.Checkout(ctx, "p1", "abc123")
+	wt, err := c.Checkout(ctx, "p1", "abc123", "")
 	if err != nil {
 		t.Fatalf("Checkout: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestRepoCacheCheckoutFetchOnMissingSha(t *testing.T) {
 	if err := c.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	wt, err := c.Checkout(ctx, "p1", "abc")
+	wt, err := c.Checkout(ctx, "p1", "abc", "")
 	if err != nil {
 		t.Fatalf("Checkout: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestRepoCacheRemove(t *testing.T) {
 	if err := c.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	wt, err := c.Checkout(ctx, "p1", "abc")
+	wt, err := c.Checkout(ctx, "p1", "abc", "")
 	if err != nil {
 		t.Fatalf("Checkout: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestRepoCacheRealGitIntegration(t *testing.T) {
 	if err := c.Ensure(ctx); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	wt, err := c.Checkout(ctx, "p1", sha)
+	wt, err := c.Checkout(ctx, "p1", sha, "")
 	if err != nil {
 		t.Fatalf("Checkout: %v", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,7 +54,8 @@ func (execRunner) Output(ctx context.Context, name string, args ...string) (stri
 // RepoCache 는 단일 git 레포의 bare clone + worktree 들을 관리한다.
 type RepoCache struct {
 	workDir string // ~/.hub-agent (env AGENT_WORK_DIR)
-	repoURL string // 결정 9: 1 Agent = 1 repo
+	repoURL string // 원본 URL (로깅/캐시 키용, 토큰 미포함)
+	authURL string // git 실행용 URL (토큰 포함 가능). 빈 값이면 repoURL 사용.
 	repoDir string // <workDir>/repos/<slug>
 	logger  *slog.Logger
 	runner  CmdRunner
@@ -73,6 +75,36 @@ func NewRepoCache(workDir, repoURL string, logger *slog.Logger) *RepoCache {
 		logger:  logger,
 		runner:  execRunner{},
 	}
+}
+
+// SetToken 은 HTTPS clone/fetch 에 사용할 PAT 를 주입한다.
+// token 이 비어있거나 repoURL 이 https:// 가 아니면 no-op.
+// 토큰은 authURL 에만 저장되며 global git config 를 건드리지 않는다.
+func (c *RepoCache) SetToken(token string) {
+	c.authURL = injectToken(c.repoURL, token)
+}
+
+// gitURL 은 실제 git 명령에 사용할 URL 을 반환한다 (authURL 우선).
+func (c *RepoCache) gitURL() string {
+	if c.authURL != "" {
+		return c.authURL
+	}
+	return c.repoURL
+}
+
+// injectToken 은 HTTPS URL 에 PAT 를 userinfo 로 삽입한다.
+// https://github.com/o/r.git → https://<token>@github.com/o/r.git
+// HTTPS 가 아니거나 token 이 비면 rawURL 을 그대로 반환한다.
+func injectToken(rawURL, token string) string {
+	if token == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "https" {
+		return rawURL
+	}
+	u.User = url.User(token)
+	return u.String()
 }
 
 // SetRunner 는 단위 테스트용으로 CmdRunner 를 교체한다.
@@ -159,7 +191,7 @@ func (c *RepoCache) Ensure(ctx context.Context) error {
 	// bare clone — fetch 와 동일한 mutex 보호 (clone 도 .git/objects 쓰기).
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := c.runner.Run(ctx, "git", "clone", "--bare", c.repoURL, c.repoDir); err != nil {
+	if err := c.runner.Run(ctx, "git", "clone", "--bare", c.gitURL(), c.repoDir); err != nil {
 		return fmt.Errorf("repocache.Ensure: clone: %w", err)
 	}
 	c.logger.Info("repocache_cloned", "repo_url", c.repoURL, "repo_dir", c.repoDir)
@@ -178,25 +210,45 @@ func (c *RepoCache) isInitialized() bool {
 	return false
 }
 
-// Checkout 는 sha 의 worktree 를 만든다.
-//  1. rev-parse --verify 로 sha 가 로컬에 있는지 확인 (있으면 fetch skip).
-//  2. 없으면 fetch (mutex).
-//  3. git worktree add <path> <sha>.
-func (c *RepoCache) Checkout(ctx context.Context, previewID, sha string) (string, error) {
+// Checkout 는 sha (또는 sha가 빈 경우 branch 최신 커밋)의 worktree 를 만든다.
+//  - sha 비어있음: fetch 후 branch tip을 resolve (branch도 비면 "HEAD" 사용).
+//  - sha 있음:
+//    1. rev-parse --verify 로 로컬 확인 (있으면 fetch skip).
+//    2. 없으면 fetch 후 재확인.
+//    3. git worktree add --detach <path> <sha>.
+func (c *RepoCache) Checkout(ctx context.Context, previewID, sha, branch string) (string, error) {
 	worktreePath := filepath.Join(c.repoDir, "worktrees", "preview-"+previewID)
 
-	// (1) sha 사전 확인.
-	if err := c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "rev-parse", "--verify", sha+"^{commit}"); err != nil {
-		// (2) 없으면 fetch.
+	if sha == "" {
+		// sha 미지정: fetch 후 branch tip resolve.
 		if ferr := c.fetch(ctx); ferr != nil {
 			return "", fmt.Errorf("repocache.Checkout: fetch: %w", ferr)
 		}
-		// 재시도 — 그래도 없으면 force-push 시나리오.
+		// bare clone 에서 branch tip 을 resolve한다.
+		// fetch 후 refs/remotes/origin/<branch> 로 저장되므로 그 쪽을 먼저 시도.
+		ref := "HEAD"
+		if branch != "" {
+			ref = "origin/" + branch
+		}
+		resolved, err := c.runner.Output(ctx, "git", "--git-dir="+c.repoDir, "rev-parse", ref+"^{commit}")
+		if err != nil {
+			return "", fmt.Errorf("repocache.Checkout: resolve ref %q: %w", ref, err)
+		}
+		sha = strings.TrimSpace(resolved)
+	} else {
+		// (1) sha 사전 확인.
 		if err := c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "rev-parse", "--verify", sha+"^{commit}"); err != nil {
-			return "", fmt.Errorf("repocache.Checkout: sha %s not found after fetch: %w", sha, err)
+			// (2) 없으면 fetch.
+			if ferr := c.fetch(ctx); ferr != nil {
+				return "", fmt.Errorf("repocache.Checkout: fetch: %w", ferr)
+			}
+			// 재시도 — 그래도 없으면 force-push 시나리오.
+			if err := c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "rev-parse", "--verify", sha+"^{commit}"); err != nil {
+				return "", fmt.Errorf("repocache.Checkout: sha %s not found after fetch: %w", sha, err)
+			}
 		}
 	}
-	// (3) worktree add (mutex 불필요).
+	// worktree add (mutex 불필요).
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		return "", fmt.Errorf("repocache.Checkout: mkdir worktrees: %w", err)
 	}
@@ -241,8 +293,11 @@ func (c *RepoCache) StartPrefetch(ctx context.Context, interval time.Duration) {
 }
 
 // fetch 는 mutex 보호 하에 git fetch 를 수행한다.
+// URL 을 직접 전달해 bare clone 의 origin 설정을 변경하지 않는다.
 func (c *RepoCache) fetch(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "fetch", "--prune", "origin")
+	// refs/heads/* → refs/remotes/origin/* 로 매핑해 Checkout 의 "origin/<branch>" resolve 와 일치.
+	const refspec = "+refs/heads/*:refs/remotes/origin/*"
+	return c.runner.Run(ctx, "git", "--git-dir="+c.repoDir, "fetch", "--prune", c.gitURL(), refspec)
 }

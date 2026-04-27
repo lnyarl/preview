@@ -169,7 +169,7 @@ func (r *Runner) Handle(ctx context.Context, msg protocol.JobAssignData) error {
 	if err := r.cache.Ensure(ctx, msg.RepoURL); err != nil {
 		return r.fail(ctx, pid, "repocache_ensure", err)
 	}
-	worktree, err := r.cache.Checkout(ctx, msg.RepoURL, pid, msg.CommitSHA)
+	worktree, err := r.cache.Checkout(ctx, msg.RepoURL, pid, msg.CommitSHA, msg.Branch)
 	if err != nil {
 		return r.fail(ctx, pid, "repocache_checkout", err)
 	}

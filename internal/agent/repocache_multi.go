@@ -22,10 +22,11 @@ import (
 type MultiRepoCache struct {
 	workDir   string
 	logger    *slog.Logger
+	token     string    // HTTPS PAT. 빈 값이면 인증 없음.
 	cmdRunner CmdRunner // nil = execRunner{}. SetCmdRunner 로 테스트에서 주입 가능.
 
 	mu      sync.Mutex
-	repos   map[string]*RepoCache // key: raw repoURL
+	repos   map[string]*RepoCache // key: raw repoURL (토큰 미포함)
 
 	prefetchMu sync.Mutex
 	prefetched map[string]struct{} // repoURLs with ticker running
@@ -52,8 +53,16 @@ func NewMultiRepoCache(workDir string, logger *slog.Logger) *MultiRepoCache {
 	}
 }
 
+// SetToken 은 이후 생성되는 모든 RepoCache 에 주입할 HTTPS PAT 를 설정한다.
+// 이미 생성된 RepoCache 에는 영향을 주지 않는다.
+func (m *MultiRepoCache) SetToken(token string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.token = token
+}
+
 // getOrCreate 는 repoURL 에 대응하는 *RepoCache 를 반환한다. 없으면 생성.
-// cmdRunner 가 설정되어 있으면 새로 생성한 RepoCache 에 주입한다.
+// cmdRunner / token 이 설정되어 있으면 새로 생성한 RepoCache 에 주입한다.
 func (m *MultiRepoCache) getOrCreate(repoURL string) *RepoCache {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -64,6 +73,9 @@ func (m *MultiRepoCache) getOrCreate(repoURL string) *RepoCache {
 	if m.cmdRunner != nil {
 		rc.SetRunner(m.cmdRunner)
 	}
+	if m.token != "" {
+		rc.SetToken(m.token)
+	}
 	m.repos[repoURL] = rc
 	return rc
 }
@@ -73,9 +85,9 @@ func (m *MultiRepoCache) Ensure(ctx context.Context, repoURL string) error {
 	return m.getOrCreate(repoURL).Ensure(ctx)
 }
 
-// Checkout 은 repoURL 의 sha 에 대한 worktree 를 만들어 경로를 반환한다.
-func (m *MultiRepoCache) Checkout(ctx context.Context, repoURL, previewID, sha string) (string, error) {
-	return m.getOrCreate(repoURL).Checkout(ctx, previewID, sha)
+// Checkout 은 repoURL 의 sha (빈 경우 branch 최신) 에 대한 worktree 를 만들어 경로를 반환한다.
+func (m *MultiRepoCache) Checkout(ctx context.Context, repoURL, previewID, sha, branch string) (string, error) {
+	return m.getOrCreate(repoURL).Checkout(ctx, previewID, sha, branch)
 }
 
 // Remove 는 repoURL 의 previewID worktree 를 정리한다. 없으면 no-op.
