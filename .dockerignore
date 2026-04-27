@@ -1,0 +1,7 @@
+.git
+*.md
+hub.db
+hub.db-wal
+hub.db-shm
+.env
+docs/
